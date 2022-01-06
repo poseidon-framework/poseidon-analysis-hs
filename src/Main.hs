@@ -1,45 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           Paths_poseidon_hs      (version)
-import           Poseidon.CLI.FStats    (FStatSpec (..), FstatsOptions (..),
-                                        JackknifeMode (..), fStatSpecParser,
-                                        runFstats, runParser)
-import           Poseidon.GenotypeData  (GenotypeFormatSpec (..), SNPSetSpec(..))
-import           Poseidon.CLI.Init      (InitOptions (..), runInit)
-import           Poseidon.CLI.List      (ListEntity (..), ListOptions (..),
-                                        runList, RepoLocationSpec(..))
-import           Poseidon.CLI.Fetch     (FetchOptions (..), runFetch)
-import           Poseidon.CLI.Forge     (ForgeOptions (..), runForge)
-import           Poseidon.CLI.Genoconvert (GenoconvertOptions (..), runGenoconvert)
-import           Poseidon.EntitiesList  (SignedEntitiesList,
-                                        readPoseidonEntitiesString)
-import           Poseidon.CLI.Summarise (SummariseOptions(..), runSummarise)
-import           Poseidon.CLI.Survey    (SurveyOptions(..), runSurvey)
-import           Poseidon.CLI.Update    (runUpdate, UpdateOptions (..))
-import           Poseidon.CLI.Validate  (ValidateOptions(..), runValidate)
-import           Poseidon.Janno         (jannoHeaderString)
-import           Poseidon.PoseidonVersion (validPoseidonVersions, showPoseidonVersion)
-import           Poseidon.SecondaryTypes (ContributorSpec (..),
-                                        VersionComponent (..),
-                                        poseidonVersionParser, 
-                                        contributorSpecParser)
-import           Poseidon.Utils         (PoseidonException (..),
-                                        renderPoseidonException)
+import           FStats                          (FStatSpec (..),
+                                                  FstatsOptions (..),
+                                                  JackknifeMode (..),
+                                                  fStatSpecParser, runFstats,
+                                                  runParser)
+-- import           RAS                             (RASOptions (..))
 
-import           Control.Applicative    ((<|>))
-import           Control.Exception      (catch)
-import           Data.ByteString.Char8  (pack, splitWith)
-import           Data.List              (intercalate)
-import           Data.Version           (Version (..), showVersion)
-import qualified Options.Applicative    as OP
-import           Options.Applicative.Help.Pretty (string)
-import           SequenceFormats.Utils  (Chrom (..))
-import           System.Exit            (exitFailure)
-import           System.IO              (hPutStrLn, stderr)
-import           Text.Read              (readEither)
+import           Paths_poseidon_analysis_hs      (version)
+import           Poseidon.PoseidonVersion        (showPoseidonVersion,
+                                                  validPoseidonVersions)
+import           Poseidon.Utils                  (PoseidonException (..),
+                                                  renderPoseidonException)
+
+import           Control.Exception               (catch)
+import           Data.ByteString.Char8           (pack, splitWith)
+import           Data.List                       (intercalate)
+import           Data.Version                    (showVersion)
+import qualified Options.Applicative             as OP
+import           SequenceFormats.Utils           (Chrom (..))
+import           System.Exit                     (exitFailure)
+import           System.IO                       (hPutStrLn, stderr)
+import           Text.Read                       (readEither)
 
 data Options = CmdFstats FstatsOptions
-    | CmdRAS RASOptions
+    -- | CmdRAS RASOptions
 
 main :: IO ()
 main = do
@@ -56,8 +41,8 @@ main = do
 
 runCmd :: Options -> IO ()
 runCmd o = case o of
-    CmdFstats opts    -> runFstats opts
-    CmdRAS opts      -> runRAS opts
+    CmdFstats opts -> runFstats opts
+    -- CmdRAS opts    -> runRAS opts
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
@@ -71,21 +56,21 @@ versionOption :: OP.Parser (a -> a)
 versionOption = OP.infoOption (showVersion version) (OP.long "version" <> OP.help "Show version number")
 
 renderVersion :: String
-renderVersion = 
-    "xerxes v" ++ showVersion version ++ " for poseidon v" ++ 
+renderVersion =
+    "xerxes v" ++ showVersion version ++ " for poseidon v" ++
     intercalate ", v" (map showPoseidonVersion validPoseidonVersions) ++ "\n" ++
     "https://poseidon-framework.github.io" -- ++ "\n" ++
     --")<(({°> ~ ────E ~ <°}))>("
 
 optParser :: OP.Parser Options
 optParser = OP.subparser $
-    OP.command "fstats" fstatsOptInfo <>
-    OP.command "ras" rasOptInfo
+    OP.command "fstats" fstatsOptInfo -- <>
+    -- OP.command "ras" rasOptInfo
   where
     fstatsOptInfo = OP.info (OP.helper <*> (CmdFstats <$> fstatsOptParser))
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
-    rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
-        (OP.progDesc "Compute rare allele sharing statistics between reference and test individual or groups, within and across Poseidon packages")
+    -- rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
+    --     (OP.progDesc "Compute rare allele sharing statistics between reference and test individual or groups, within and across Poseidon packages")
 
 
 fstatsOptParser :: OP.Parser FstatsOptions
@@ -143,9 +128,38 @@ readStatSpecString s = case runParser fStatSpecParser () "" s of
 
 parseRawOutput :: OP.Parser Bool
 parseRawOutput = OP.switch (
-    OP.long "raw" <> 
+    OP.long "raw" <>
     OP.help "output table as tsv without header. Useful for piping into grep or awk"
     )
 
-rasOptInfo :: OP.Parser RASOptions
-rasOptInfo = undefined
+-- rasOptInfo :: OP.Parser RASOptions
+-- rasOptInfo = RASOptions <$> parseBasePaths
+--                        <*> parseJackknife
+--                        <*> parseExcludeChroms
+--                        <*> parsePopConfig
+--                        <*> parseMinCutoff
+--                        <*> parseMaxCutoff
+
+-- parsePopConfig :: OP.Parser PopConfig
+-- parsePopConfig = parsePopConfigDirect <|> parsePopConfigFile
+--   where
+--     parsePopConfigDirect = PopConfigDirect <$> some parseLeftPop <*> some parseRightPop
+--     parsePopConfigFile = PopConfigFile <$> OP.option OP.str (OP.long "popConfigFile" <>
+--         OP.help "a file containing the population configuration")
+
+-- parseLeftPop :: OP.Parser PopDef
+-- parseLeftPop = OP.option (OP.eitherReader parsePopDef) (OP.long "popLeft" <> OP.short 'l' <>
+--     OP.help "Define a left population. can be given multiple times. A single population can be defined in their simplest form my just entering a group label, such as \"French\". \
+--     \A single individual can be entered within angular brackets, such as \"<I123>\". More complex group definitions can \
+--     \involve multiple groups or individuals that are added or subtracted, using a comma-separated list of entities \
+--     \(groups or individuals), and using the \"!\" symbol to mark an entity to exclude from the definition. \
+--     \Example: \"French,!<I1234>,!<I1235>,Spanish\". Here, French is added as group, then two individuals are removed, \
+--     \and then Spanish is added. These operations are always executed in the order they appear in the definition. \
+--     \Note it is also possible to define completely new groups by adding up specific \
+--     \individuals, such as \"<I123>,<I124>,<I125>\". Note: In bash or zsh, you need to surround group definitions \
+--     \using single quotes!")
+
+-- parseRightPop :: OP.Parser PopDef
+-- parseRightPop = OP.option (OP.eitherReader parsePopDef) (OP.long "popRight" <> OP.short 'r' <>
+--     OP.help "Define a right population. can be given multiple times. The same rules for complex compositions \
+--     \apply as with --popLeft, see above.")
