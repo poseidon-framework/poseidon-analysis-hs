@@ -2,17 +2,19 @@
 
 module RAS where
 
-import Utils (JackknifeMode(..))
+import           Utils                 (GenomPos, JackknifeMode (..))
 
 import           Control.Applicative   (some, (<|>))
 import           Control.Exception     (Exception, throwIO)
 import           Control.Monad         (forM)
-import           Data.Aeson            (FromJSON, parseJSON, withObject, (.:), Object)
+import           Data.Aeson            (FromJSON, Object, parseJSON, withObject,
+                                        (.:))
 import           Data.Aeson.Types      (Parser, Value)
 import qualified Data.ByteString       as B
 import           Data.ByteString.Char8 (pack, splitWith)
 import           Data.Char             (isSpace)
 import           Data.Text             (Text)
+import qualified Data.Vector.Unboxed   as V
 import           Data.Version          (showVersion)
 import           Data.Yaml             (decodeEither')
 import qualified Options.Applicative   as OP
@@ -30,6 +32,7 @@ data RASOptions = RASOptions
     , _optJackknifeMode :: JackknifeMode
     , _optExcludeChroms :: [Chrom]
     , _optPopConfig     :: PopConfig
+    , _optOutgroup      :: PopDef
     , _optMinCutoff     :: Int
     , _optMaxCutoff     :: Int
     }
@@ -103,11 +106,9 @@ runRAS rasOpts = do
     (popLefts, popRights) <- case _optPopConfig rasOpts of
         PopConfigDirect pl pr -> return (pl, pr)
         PopConfigFile f       -> readPopConfig f
+    hPutStrLn stderr $ "Found left populations: " ++ show popLefts
+    hPutStrLn stderr $ "Found right populations: " ++ show popRights
     return ()
-
--- popDefHelpStr :: String
--- popDefHelpStr = ""
-
 
 readPopConfig :: FilePath -> IO ([PopDef], [PopDef])
 readPopConfig fn = do
@@ -117,13 +118,16 @@ readPopConfig fn = do
         Right x  -> return x
     return (pl, pr)
 
--- data BlockData = BlockData
---     { blockStartPos  :: GenomPos
---     , blockEndPos    :: GenomPos
---     , blockSiteCount :: Int
---     , blockVal       :: Double
---     }
---     deriving (Show)
+data BlockData = BlockData
+    { blockStartPos  :: GenomPos
+    , blockEndPos    :: GenomPos
+    , blockSiteCount :: Int
+    , blockVals      :: V.Vector Double
+    }
+    deriving (Show)
+
+pairToIndex :: (Int, Int, Int) -> Int
+tupleToIndex (k, leftPopI, rightPopI) = 
 
 -- statSpecsFold :: [EigenstratIndEntry] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
 -- statSpecsFold indEntries fStatSpecs = do

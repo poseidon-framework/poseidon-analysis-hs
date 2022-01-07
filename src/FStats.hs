@@ -10,14 +10,9 @@ module FStats (
     , readStatSpecsFromFile
 ) where
 
-import Utils (JackknifeMode(..))
+import           Utils                      (GenomPos, JackknifeMode (..),
+                                             PopSpec (..), parsePopSpecsN)
 
-import           Poseidon.Package           (PoseidonPackage (..),
-                                             readPoseidonPackageCollection,
-                                             getIndividuals,
-                                             getJointGenotypeData,
-                                             PackageReadOptions (..), defaultPackageReadOptions)
-import           Poseidon.Utils             (PoseidonException (..))
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (throwIO)
 import           Control.Foldl              (Fold (..), list, purely)
@@ -33,6 +28,13 @@ import           Pipes                      ((>->))
 import           Pipes.Group                (chunksOf, folds, groupsBy)
 import qualified Pipes.Prelude              as P
 import           Pipes.Safe                 (runSafeT)
+import           Poseidon.Package           (PackageReadOptions (..),
+                                             PoseidonPackage (..),
+                                             defaultPackageReadOptions,
+                                             getIndividuals,
+                                             getJointGenotypeData,
+                                             readPoseidonPackageCollection)
+import           Poseidon.Utils             (PoseidonException (..))
 import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
                                              EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
@@ -72,17 +74,6 @@ data FStat = F4 [Int] [Int] [Int] [Int]
     | F2 [Int] [Int]
     | PWM [Int] [Int]
 
--- | A datatype to represent a group or an individual
-data PopSpec = PopSpecGroup String -- ^ Define a group name
-    | PopSpecInd String -- ^ Define an individual name
-    deriving (Eq)
-
-instance Show PopSpec where
-    show (PopSpecGroup n) = n
-    show (PopSpecInd   n) = "<" ++ n ++ ">"
-
--- | A helper type to represent a genomic position.
-type GenomPos = (Chrom, Int)
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
@@ -103,24 +94,6 @@ f4SpecParser = do
     [a, b, c, d] <- P.between (P.char '(') (P.char ')') (parsePopSpecsN 4)
     return $ F4Spec a b c d
 
-parsePopSpecsN :: Int -> P.Parser [PopSpec]
-parsePopSpecsN n = sepByN n parsePopSpec (P.char ',' <* P.spaces)
-
-sepByN :: Int -> P.Parser a -> P.Parser sep -> P.Parser [a]
-sepByN 0 _ _ = return []
-sepByN 1 p _ = fmap (: []) p
-sepByN n p s = do
-    x <- p
-    _ <- s
-    xs <- sepByN (n - 1) p s
-    return (x:xs)
-
-parsePopSpec :: P.Parser PopSpec
-parsePopSpec = parseIndividualSpec <|> parseGroupSpec
-  where
-    parseIndividualSpec = PopSpecInd <$> P.between (P.char '<') (P.char '>') parseName
-    parseGroupSpec = PopSpecGroup <$> parseName
-    parseName = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` ",<>()")))
 
 f3SpecParser :: P.Parser FStatSpec
 f3SpecParser = do
@@ -228,7 +201,7 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
     allPackages <- readPoseidonPackageCollection pacReadOpts baseDirs
     statSpecsFromFile <- case maybeStatSpecsFile of
         Nothing -> return []
-        Just f -> readStatSpecsFromFile f
+        Just f  -> readStatSpecsFromFile f
     let statSpecs = statSpecsFromFile ++ statSpecsDirect
     if null statSpecs then
         hPutStrLn stderr "No statistics to be computed"
@@ -276,7 +249,7 @@ readStatSpecsFromFile statSpecsFile = do
     eitherParseResult <- P.parseFromFile (P.spaces *> multiFstatSpecParser <* P.spaces) statSpecsFile
     case eitherParseResult of
         Left err -> throwIO (PoseidonFStatsFormatException (show err))
-        Right r -> return r
+        Right r  -> return r
 
 computeJackknife :: [Int] -> [Double] -> (Double, Double)
 computeJackknife weights values =

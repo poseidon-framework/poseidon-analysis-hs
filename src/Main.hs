@@ -4,7 +4,7 @@ import           FStats                          (FStatSpec (..),
                                                   FstatsOptions (..),
                                                   fStatSpecParser, runFstats,
                                                   runParser)
-import           RAS                             (RASOptions (..), runRAS, PopConfig(..), PopDef, parsePopDef)
+import           RAS                             (RASOptions (..), runRAS, PopConfig(..), PopDef, parsePopDef, PopComponent)
 import Utils (JackknifeMode(..))
 
 import           Paths_poseidon_analysis_hs      (version)
@@ -138,6 +138,7 @@ rasOptParser = RASOptions <$> parseBasePaths
                           <*> parseJackknife
                           <*> parseExcludeChroms
                           <*> parsePopConfig
+                          <*> parseOutgroup
                           <*> parseMinCutoff
                           <*> parseMaxCutoff
 
@@ -165,6 +166,10 @@ parseRightPop = OP.option (OP.eitherReader parsePopDef) (OP.long "popRight" <> O
     OP.help "Define a right population. can be given multiple times. The same rules for complex compositions \
     \apply as with --popLeft, see above.")
 
+parseOutgroup :: OP.Parser PopDef
+parseOutgroup = OP.option (OP.eitherReader parsePopDef) (OP.long "outgroup" <> OP.short 'o' <>
+    OP.help "Define an outgroup to polarise allele frequencies with. The same rules for complex compositions \
+    \apply as with --popLeft, see above.")
 
 parseMinCutoff :: OP.Parser Int
 parseMinCutoff = OP.option OP.auto (OP.long "minCutoff" <>
