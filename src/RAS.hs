@@ -2,10 +2,12 @@
 
 module RAS where
 
+import Utils (JackknifeMode(..))
+
 import           Control.Applicative   (some, (<|>))
 import           Control.Exception     (Exception, throwIO)
 import           Control.Monad         (forM)
-import           Data.Aeson            (FromJSON, parseJSON, withObject, (.:))
+import           Data.Aeson            (FromJSON, parseJSON, withObject, (.:), Object)
 import           Data.Aeson.Types      (Parser, Value)
 import qualified Data.ByteString       as B
 import           Data.ByteString.Char8 (pack, splitWith)
@@ -31,10 +33,6 @@ data RASOptions = RASOptions
     , _optMinCutoff     :: Int
     , _optMaxCutoff     :: Int
     }
-    deriving (Show)
-
-data JackknifeMode = JackknifePerN Int
-    | JackknifePerChromosome
     deriving (Show)
 
 data PopConfig = PopConfigDirect [PopDef] [PopDef]
@@ -66,7 +64,7 @@ instance FromJSON PopConfigYamlStruct where
         <$> parsePopDefsFromJSON v "popLefts"
         <*> parsePopDefsFromJSON v "popRights"
       where
-        parsePopDefsFromJSON :: Value -> Text -> Parser [PopDef]
+        parsePopDefsFromJSON :: Object -> Text -> Parser [PopDef]
         parsePopDefsFromJSON v label = do
             popDefStrings <- v .: label
             forM popDefStrings $ \popDefString -> do
@@ -82,6 +80,21 @@ instance Exception RascalException
 -- | A helper type to represent a genomic position.
 -- type GenomPos = (Chrom, Int)
 
+parsePopDef :: String -> Either String PopDef
+parsePopDef s = case P.runParser popDefParser () "" s of
+    Left p  -> Left (show p)
+    Right x -> Right x
+
+popDefParser :: PS.Parser PopDef
+popDefParser = (componentParserSubtract <|> componentParserAdd) `P.sepBy` P.char ','
+  where
+    componentParserSubtract = P.char '!' *> (PopComponentSubtract <$> componentEntityParser)
+    componentParserAdd = PopComponentAdd <$> componentEntityParser
+    componentEntityParser = entityIndParser <|> entityGroupParser
+    entityIndParser = EntitySpecInd <$> P.between (P.char '<') (P.char '>') parseName
+    entityGroupParser = EntitySpecGroup <$> parseName
+    parseName = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` [',', '<', '>'])))
+
 runRAS :: RASOptions -> IO ()
 runRAS rasOpts = do
     let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
@@ -91,40 +104,10 @@ runRAS rasOpts = do
         PopConfigDirect pl pr -> return (pl, pr)
         PopConfigFile f       -> readPopConfig f
     return ()
-  where
-    p = OP.prefs OP.showHelpOnEmpty
-    optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
-        OP.briefDesc <>
-        OP.progDesc "rascal computes RAS statistics for Poseidon-packaged genotype data")
-    versionOption = OP.infoOption (showVersion version) (OP.long "version" <> OP.help "Show version")
 
-popDefHelpStr :: String
-popDefHelpStr = ""
+-- popDefHelpStr :: String
+-- popDefHelpStr = ""
 
-parsePopDef :: String -> Either String PopDef
-parsePopDef s = case P.runParser popDefParser () "" s of
-    Left p  -> Left (show p)
-    Right x -> Right x
-
-popDefParser :: PS.Parser PopDef
-popDefParser = (componentParserSubtract <|> componentParserAdd) `P.sepBy` (P.char ',')
-  where
-    componentParserSubtract = P.char '!' *> (PopComponentSubtract <$> componentEntityParser)
-    componentParserAdd = PopComponentAdd <$> componentEntityParser
-    componentEntityParser = entityIndParser <|> entityGroupParser
-    entityIndParser = EntitySpecInd <$> P.between (P.char '<') (P.char '>') parseName
-    entityGroupParser = EntitySpecGroup <$> parseName
-    parseName = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` [',', '<', '>'])))
-
-parseMinCutoff :: OP.Parser Int
-parseMinCutoff = OP.option OP.auto (OP.long "minCutoff" <>
-    OP.help "define a minimal allele-count cutoff for the RAS statistics. " <>
-    OP.value 0 <> OP.showDefault)
-
-parseMaxCutoff :: OP.Parser Int
-parseMaxCutoff = OP.option OP.auto (OP.long "maxCutoff" <>
-    OP.help "define a maximal allele-count cutoff for the RAS statistics. " <>
-    OP.value 10 <> OP.showDefault)
 
 readPopConfig :: FilePath -> IO ([PopDef], [PopDef])
 readPopConfig fn = do

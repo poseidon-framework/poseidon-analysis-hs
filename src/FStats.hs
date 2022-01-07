@@ -10,13 +10,14 @@ module FStats (
     , readStatSpecsFromFile
 ) where
 
+import Utils (JackknifeMode(..))
+
 import           Poseidon.Package           (PoseidonPackage (..),
                                              readPoseidonPackageCollection,
                                              getIndividuals,
                                              getJointGenotypeData,
                                              PackageReadOptions (..), defaultPackageReadOptions)
 import           Poseidon.Utils             (PoseidonException (..))
-
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (throwIO)
 import           Control.Foldl              (Fold (..), list, purely)
@@ -52,10 +53,6 @@ data FstatsOptions = FstatsOptions
     , _foRawOutput       :: Bool -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     }
 
--- | A datatype representing the two options for how to run the Block-Jackknife
-data JackknifeMode = JackknifePerN Int -- ^ Run the Jackknife in blocks of N consecutive SNPs
-    | JackknifePerChromosome -- ^ Run the Jackknife in blocks defined as entire chromosomes.
-
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
 data FStatSpec = F4Spec PopSpec PopSpec PopSpec PopSpec -- ^ F4 Statistics
     | F3Spec PopSpec PopSpec PopSpec -- ^ F3 Statistics
@@ -88,7 +85,7 @@ instance Show PopSpec where
 type GenomPos = (Chrom, Int)
 
 data BlockData = BlockData
-    { blockStartPos  :: GenomPos 
+    { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos
     , blockSiteCount :: Int
     , blockVal       :: Double
@@ -111,7 +108,7 @@ parsePopSpecsN n = sepByN n parsePopSpec (P.char ',' <* P.spaces)
 
 sepByN :: Int -> P.Parser a -> P.Parser sep -> P.Parser [a]
 sepByN 0 _ _ = return []
-sepByN 1 p _ = fmap (\x -> [x]) p
+sepByN 1 p _ = fmap (: []) p
 sepByN n p s = do
     x <- p
     _ <- s
@@ -209,7 +206,7 @@ getPopIndices indEntries popSpec =
                 PopSpecGroup name -> return (name == popName)
                 PopSpecInd   name -> return (name == indName)
             return i
-    in  if (null ret)
+    in  if null ret
         then case popSpec of
             PopSpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
             PopSpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
@@ -234,7 +231,7 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
         Just f -> readStatSpecsFromFile f
     let statSpecs = statSpecsFromFile ++ statSpecsDirect
     if null statSpecs then
-        hPutStrLn stderr $ "No statistics to be computed"
+        hPutStrLn stderr "No statistics to be computed"
     else do
         let collectedStats = collectStatSpecGroups statSpecs
         relevantPackages <- findRelevantPackages collectedStats allPackages
@@ -257,7 +254,7 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
             tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
             tableB = do
                 (fstat, result) <- zip statSpecs jackknifeEstimates
-                return [show fstat, show (fst result), show (snd result), show (fst result / snd result)]
+                return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
         if   rawOutput
         then do
             putStrLn $ intercalate "\t" tableH
@@ -307,7 +304,7 @@ findRelevantPackages popSpecs packages = do
         inds <- getIndividuals pac
         let indNamesPac   = [ind   | EigenstratIndEntry ind _ _     <- inds]
             groupNamesPac = [group | EigenstratIndEntry _   _ group <- inds]
-        if   length (intersect indNamesPac indNamesStats) > 0 || length (intersect groupNamesPac groupNamesStats) > 0
+        if   not (null (indNamesPac `intersect` indNamesStats)) || not (null (groupNamesPac `intersect` groupNamesStats))
         then return (Just pac)
         else return Nothing
 
