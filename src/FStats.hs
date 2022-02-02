@@ -11,7 +11,8 @@ module FStats (
 ) where
 
 import           Utils                      (GenomPos, JackknifeMode (..),
-                                             PopSpec (..), parsePopSpecsN)
+                                             PopSpec (..), parsePopSpecsN, computeAlleleFreq, 
+                                             computeJackknife)
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (throwIO)
@@ -147,29 +148,16 @@ statSpecFold iE fStatSpec = do
 
 computeFStat :: FStat -> GenoLine -> Maybe Double
 computeFStat fStat gL = case fStat of
-    (F4  aI bI cI dI) -> computeF4  <$> computeFreq gL aI <*> computeFreq gL bI <*> computeFreq gL cI <*> computeFreq gL dI
-    (F3  aI bI cI   ) -> computeF3  <$> computeFreq gL aI <*> computeFreq gL bI <*> computeFreq gL cI
-    (F2  aI bI      ) -> computeF2  <$> computeFreq gL aI <*> computeFreq gL bI
-    (PWM aI bI      ) -> computePWM <$> computeFreq gL aI <*> computeFreq gL bI
+    (F4  aI bI cI dI) -> computeF4  <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI <*> computeAlleleFreq gL cI <*> computeAlleleFreq gL dI
+    (F3  aI bI cI   ) -> computeF3  <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI <*> computeAlleleFreq gL cI
+    (F2  aI bI      ) -> computeF2  <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI
+    (PWM aI bI      ) -> computePWM <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI
   where
     computeF4  a b c d = (a - b) * (c - d)
     computeF3  a b c   = (c - a) * (c - b)
     computeF2  a b     = (a - b) * (a - b)
     computePWM a b     = a * (1.0 - b) + (1.0 - a) * b
 
-computeFreq :: GenoLine -> [Int] -> Maybe Double
-computeFreq line indices =
-    let nrNonMissing = length . filter (/=Missing) . map (line !) $ indices
-        nrDerived = sum $ do
-            i <- indices
-            case line ! i of
-                HomRef  -> return (0 :: Integer)
-                Het     -> return 1
-                HomAlt  -> return 2
-                Missing -> return 0
-    in  if nrNonMissing > 0
-        then Just (fromIntegral nrDerived / fromIntegral nrNonMissing)
-        else Nothing
 
 getPopIndices :: [EigenstratIndEntry] -> PopSpec -> Either PoseidonException [Int]
 getPopIndices indEntries popSpec =
@@ -250,15 +238,6 @@ readStatSpecsFromFile statSpecsFile = do
     case eitherParseResult of
         Left err -> throwIO (PoseidonFStatsFormatException (show err))
         Right r  -> return r
-
-computeJackknife :: [Int] -> [Double] -> (Double, Double)
-computeJackknife weights values =
-    let weights'    = map fromIntegral weights
-        sumWeights  = sum weights'
-        g           = fromIntegral (length weights)
-        theta       = sum [mj * val | (mj, val) <- zip weights' values] / sumWeights
-        sigmaSquare = sum [mj * (val - theta) ^ (2 :: Int) / (sumWeights - mj) | (mj, val) <- zip weights' values] / g
-    in  (theta, sqrt sigmaSquare)
 
 collectStatSpecGroups :: [FStatSpec] -> [PopSpec]
 collectStatSpecGroups statSpecs = nub . concat $ do

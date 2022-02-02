@@ -2,43 +2,61 @@
 
 module RAS where
 
-import           Utils                 (GenomPos, JackknifeMode (..))
+import           Utils                       (GenomPos, JackknifeMode (..),
+                                              computeAlleleFreq, computeJackknife)
 
-import           Control.Applicative   (some, (<|>))
-import           Control.Exception     (Exception, throwIO)
-import           Control.Monad         (forM)
-import           Data.Aeson            (FromJSON, Object, parseJSON, withObject,
-                                        (.:))
-import           Data.Aeson.Types      (Parser, Value)
-import qualified Data.ByteString       as B
-import           Data.ByteString.Char8 (pack, splitWith)
-import           Data.Char             (isSpace)
-import           Data.Text             (Text)
-import qualified Data.Vector.Unboxed   as V
-import           Data.Version          (showVersion)
-import           Data.Yaml             (decodeEither')
-import qualified Options.Applicative   as OP
-import           Poseidon.Package      (PackageReadOptions (..),
-                                        defaultPackageReadOptions,
-                                        readPoseidonPackageCollection)
-import           SequenceFormats.Utils (Chrom (..))
-import           System.IO             (hPutStrLn, stderr)
-import qualified Text.Parsec           as P
-import qualified Text.Parsec.String    as PS
-import           Text.Read             (readEither)
+import           Control.Applicative         ((<|>))
+import           Control.Exception           (Exception, throwIO)
+import           Control.Foldl               (FoldM (..), impurely, list,
+                                              purely)
+import           Control.Monad               (forM, forM_, when)
+import           Control.Monad.Catch         (throwM)
+import           Control.Monad.IO.Class      (MonadIO, liftIO)
+import           Data.Aeson                  (FromJSON, Object, parseJSON,
+                                              withObject, (.:))
+import           Data.Aeson.Types            (Parser)
+import qualified Data.ByteString             as B
+import           Data.Char                   (isSpace)
+import           Data.List                   (intersect, nub, sort, (\\))
+import           Data.Maybe                  (catMaybes)
+import           Data.Text                   (Text)
+import qualified Data.Vector                 as V
+import qualified Data.Vector.Unboxed         as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
+
+import           Data.Yaml                   (decodeEither')
+import           Lens.Family2                (view)
+
+import           Pipes                       ((>->))
+import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
+import qualified Pipes.Prelude               as P
+import           Pipes.Safe                  (runSafeT)
+import           Poseidon.Package            (PackageReadOptions (..),
+                                              PoseidonPackage (..),
+                                              defaultPackageReadOptions,
+                                              getIndividuals,
+                                              getJointGenotypeData,
+                                              readPoseidonPackageCollection)
+import           Poseidon.Utils              (PoseidonException (..))
+import           SequenceFormats.Eigenstrat  (EigenstratIndEntry (..),
+                                              EigenstratSnpEntry (..),
+                                              GenoEntry (..), GenoLine)
+import           SequenceFormats.Utils       (Chrom (..))
+import           System.IO                   (hPutStrLn, stderr)
+import qualified Text.Parsec                 as P
+import qualified Text.Parsec.String          as PS
 
 data RASOptions = RASOptions
-    { _optBaseDirs      :: [FilePath]
-    , _optJackknifeMode :: JackknifeMode
-    , _optExcludeChroms :: [Chrom]
-    , _optPopConfig     :: PopConfig
-    , _optOutgroup      :: PopDef
-    , _optMinCutoff     :: Int
-    , _optMaxCutoff     :: Int
+    { _optBaseDirs       :: [FilePath]
+    , _optJackknifeMode  :: JackknifeMode
+    , _optExcludeChroms  :: [Chrom]
+    , _optPopConfig      :: PopConfig
+    , _optMaxCutoff      :: Int
+    , _optMaxMissingness :: Double
     }
     deriving (Show)
 
-data PopConfig = PopConfigDirect [PopDef] [PopDef]
+data PopConfig = PopConfigDirect [PopDef] [PopDef] PopDef
     | PopConfigFile FilePath
     deriving (Show)
 
@@ -58,15 +76,23 @@ instance Show EntitySpec where
     show (EntitySpecInd   n) = "<" ++ n ++ ">"
 
 data PopConfigYamlStruct = PopConfigYamlStruct
-    { popConfigLefts  :: [PopDef]
-    , popConfigRights :: [PopDef]
+    { popConfigLefts    :: [PopDef]
+    , popConfigRights   :: [PopDef]
+    , popConfigOutgroup :: PopDef
     }
 
 instance FromJSON PopConfigYamlStruct where
     parseJSON = withObject "PopConfigYamlStruct" $ \v -> PopConfigYamlStruct
         <$> parsePopDefsFromJSON v "popLefts"
         <*> parsePopDefsFromJSON v "popRights"
+        <*> parsePopDefFromJSON v "outgroup"
       where
+        parsePopDefFromJSON :: Object -> Text -> Parser PopDef
+        parsePopDefFromJSON v label = do
+            popDefString <- v .: label
+            case parsePopDef popDefString of
+                Left err -> fail err
+                Right p  -> return p
         parsePopDefsFromJSON :: Object -> Text -> Parser [PopDef]
         parsePopDefsFromJSON v label = do
             popDefStrings <- v .: label
@@ -74,14 +100,6 @@ instance FromJSON PopConfigYamlStruct where
                 case parsePopDef popDefString of
                     Left err -> fail err
                     Right p  -> return p
-
-data RascalException = PopConfigYamlException FilePath String
-    deriving (Show)
-
-instance Exception RascalException
-
--- | A helper type to represent a genomic position.
--- type GenomPos = (Chrom, Int)
 
 parsePopDef :: String -> Either String PopDef
 parsePopDef s = case P.runParser popDefParser () "" s of
@@ -98,192 +116,204 @@ popDefParser = (componentParserSubtract <|> componentParserAdd) `P.sepBy` P.char
     entityGroupParser = EntitySpecGroup <$> parseName
     parseName = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` [',', '<', '>'])))
 
-runRAS :: RASOptions -> IO ()
-runRAS rasOpts = do
-    let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
-    allPackages <- readPoseidonPackageCollection pacReadOpts (_optBaseDirs rasOpts)
-    hPutStrLn stderr ("Loaded " ++ show (length allPackages) ++ " packages")
-    (popLefts, popRights) <- case _optPopConfig rasOpts of
-        PopConfigDirect pl pr -> return (pl, pr)
-        PopConfigFile f       -> readPopConfig f
-    hPutStrLn stderr $ "Found left populations: " ++ show popLefts
-    hPutStrLn stderr $ "Found right populations: " ++ show popRights
-    return ()
+data RascalException = PopConfigYamlException FilePath String
+    deriving (Show)
 
-readPopConfig :: FilePath -> IO ([PopDef], [PopDef])
-readPopConfig fn = do
-    bs <- B.readFile fn
-    PopConfigYamlStruct pl pr <- case decodeEither' bs of
-        Left err -> throwIO $ PopConfigYamlException fn (show err)
-        Right x  -> return x
-    return (pl, pr)
+instance Exception RascalException
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos
-    , blockSiteCount :: Int
-    , blockVals      :: V.Vector Double
+    , blockSiteCount :: [Int]
+    , blockVals      :: [[[Double]]]
     }
     deriving (Show)
 
-pairToIndex :: (Int, Int, Int) -> Int
-tupleToIndex (k, leftPopI, rightPopI) = 
+runRAS :: RASOptions -> IO ()
+runRAS rasOpts = do
+    let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
+    allPackages <- readPoseidonPackageCollection pacReadOpts (_optBaseDirs rasOpts)
 
--- statSpecsFold :: [EigenstratIndEntry] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
--- statSpecsFold indEntries fStatSpecs = do
---     listOfFolds <- mapM (statSpecFold indEntries) fStatSpecs
---     return $ sequenceA listOfFolds
+    hPutStrLn stderr ("Loaded " ++ show (length allPackages) ++ " packages")
+    (popLefts, popRights, outgroup) <- case _optPopConfig rasOpts of
+        PopConfigDirect pl pr og -> return (pl, pr, og)
+        PopConfigFile f          -> readPopConfig f
+    hPutStrLn stderr $ "Found left populations: " ++ show popLefts
+    hPutStrLn stderr $ "Found right populations: " ++ show popRights
+    hPutStrLn stderr $ "Found outgroup: " ++ show outgroup
 
--- statSpecFold :: [EigenstratIndEntry] -> FStatSpec -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) BlockData)
--- statSpecFold iE fStatSpec = do
---     fStat <- case fStatSpec of
---         F4Spec  a b c d -> F4  <$> getPopIndices iE a <*> getPopIndices iE b <*> getPopIndices iE c <*> getPopIndices iE d
---         F3Spec  a b c   -> F3  <$> getPopIndices iE a <*> getPopIndices iE b <*> getPopIndices iE c
---         F2Spec  a b     -> F2  <$> getPopIndices iE a <*> getPopIndices iE b
---         PWMspec a b     -> PWM <$> getPopIndices iE a <*> getPopIndices iE b
---     return $ Fold (step fStat) initialize extract
---   where
---     step :: FStat -> (Maybe GenomPos, Maybe GenomPos, Int, Double) ->
---         (EigenstratSnpEntry, GenoLine) -> (Maybe GenomPos, Maybe GenomPos, Int, Double)
---     step fstat (maybeStartPos, _, count, val) (EigenstratSnpEntry c p _ _ _ _, genoLine) =
---         let newStartPos = case maybeStartPos of
---                 Nothing       -> Just (c, p)
---                 Just (c', p') -> Just (c', p')
---             newEndPos = Just (c, p)
---         in  case computeFStat fstat genoLine of
---                 Just v  -> (newStartPos, newEndPos, count + 1, val + v)
---                 Nothing -> (newStartPos, newEndPos, count + 1, val)
---     initialize :: (Maybe GenomPos, Maybe GenomPos, Int, Double)
---     initialize = (Nothing, Nothing, 0, 0.0)
---     extract :: (Maybe GenomPos, Maybe GenomPos, Int, Double) -> BlockData
---     extract (maybeStartPos, maybeEndPos, count, totalVal) =
---         let Just startPos = maybeStartPos
---             Just endPos = maybeEndPos
---         in  BlockData startPos endPos count (totalVal / fromIntegral count)
+    let collectedStats = collectStatEntities (popLefts ++ popRights ++ [outgroup])
+    relevantPackages <- findRelevantPackages collectedStats allPackages
+    hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+    forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
 
--- computeFStat :: FStat -> GenoLine -> Maybe Double
--- computeFStat fStat gL = case fStat of
---     (F4  aI bI cI dI) -> computeF4  <$> computeFreq gL aI <*> computeFreq gL bI <*> computeFreq gL cI <*> computeFreq gL dI
---     (F3  aI bI cI   ) -> computeF3  <$> computeFreq gL aI <*> computeFreq gL bI <*> computeFreq gL cI
---     (F2  aI bI      ) -> computeF2  <$> computeFreq gL aI <*> computeFreq gL bI
---     (PWM aI bI      ) -> computePWM <$> computeFreq gL aI <*> computeFreq gL bI
---   where
---     computeF4  a b c d = (a - b) * (c - d)
---     computeF3  a b c   = (c - a) * (c - b)
---     computeF2  a b     = (a - b) * (a - b)
---     computePWM a b     = a * (1.0 - b) + (1.0 - a) * b
+    blockData <- runSafeT $ do
+        (eigenstratIndEntries, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+        let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
+            eigenstratProdInChunks = case _optJackknifeMode rasOpts of
+                JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+        rasFold <- case buildRasFold eigenstratIndEntries (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) outgroup popLefts popRights of
+            Left e  ->  throwM e
+            Right f -> return f
+        let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
+        purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+    let maxK = _optMaxCutoff rasOpts
+        nLefts = length popLefts
+        nRights = length popRights
+    let jackknifeEstimates = do
+            k <- [0 .. (maxK - 2)]
+            return $ do
+                i <- [0 .. nLefts]
+                return $ do
+                    j <- [0 .. nRights]
+                    let counts    = [blockSiteCount bd !! i | bd <- blockData]
+                    let vals      = [((blockVals bd !! k) !! i) !! j | bd <- blockData]
+                        cumulVals = do
+                            bd <- blockData
+                            return $ sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]]
+                    return $ (computeJackknife counts vals, computeJackknife counts cumulVals)
+    return ()
+  where
+    chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
+    chunkEigenstratByChromosome = view (groupsBy sameChrom)
+    sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
+        chrom1 == chrom2
+    chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
+    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block
 
--- computeFreq :: GenoLine -> [Int] -> Maybe Double
--- computeFreq line indices =
---     let nrNonMissing = length . filter (/=Missing) . map (line !) $ indices
---         nrDerived = sum $ do
---             i <- indices
---             case line ! i of
---                 HomRef  -> return (0 :: Integer)
---                 Het     -> return 1
---                 HomAlt  -> return 2
---                 Missing -> return 0
---     in  if nrNonMissing > 0
---         then Just (fromIntegral nrDerived / fromIntegral nrNonMissing)
---         else Nothing
+readPopConfig :: FilePath -> IO ([PopDef], [PopDef], PopDef)
+readPopConfig fn = do
+    bs <- B.readFile fn
+    PopConfigYamlStruct pl pr og <- case decodeEither' bs of
+        Left err -> throwIO $ PopConfigYamlException fn (show err)
+        Right x  -> return x
+    return (pl, pr, og)
 
--- getPopIndices :: [EigenstratIndEntry] -> PopSpec -> Either PoseidonException [Int]
--- getPopIndices indEntries popSpec =
---     let ret = do
---             (i, EigenstratIndEntry indName _ popName) <- zip [0..] indEntries
---             True <- case popSpec of
---                 PopSpecGroup name -> return (name == popName)
---                 PopSpecInd   name -> return (name == indName)
---             return i
---     in  if (null ret)
---         then case popSpec of
---             PopSpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
---             PopSpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
---         else Right ret
+collectStatEntities :: [PopDef] -> [EntitySpec]
+collectStatEntities popDefs = do
+    pd <- popDefs
+    PopComponentAdd e <- pd
+    return e
 
--- | The main function running the FStats command.
--- runFstats :: FstatsOptions -> IO ()
--- runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect maybeStatSpecsFile rawOutput) = do
---     -- load packages --
---     allPackages <- readPoseidonPackageCollection pacReadOpts baseDirs
---     statSpecsFromFile <- case maybeStatSpecsFile of
---         Nothing -> return []
---         Just f  -> readStatSpecsFromFile f
---     let statSpecs = statSpecsFromFile ++ statSpecsDirect
---     if null statSpecs then
---         hPutStrLn stderr $ "No statistics to be computed"
---     else do
---         let collectedStats = collectStatSpecGroups statSpecs
---         relevantPackages <- findRelevantPackages collectedStats allPackages
---         hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
---         forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
---         hPutStrLn stderr $ "Computing stats " ++ show statSpecs
---         blockData <- runSafeT $ do
---             (eigenstratIndEntries, eigenstratProd) <- getJointGenotypeData False False relevantPackages
---             let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter
---                 eigenstratProdInChunks = case jackknifeMode of
---                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
---                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
---             statsFold <- case statSpecsFold eigenstratIndEntries statSpecs of
---                 Left e  ->  throwM e
---                 Right f -> return f
---             let summaryStatsProd = purely folds statsFold eigenstratProdInChunks
---             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
---         let jackknifeEstimates = [computeJackknife (map blockSiteCount blocks) (map blockVal blocks) | blocks <- transpose blockData]
---             colSpecs = replicate 4 (column expand def def def)
---             tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
---             tableB = do
---                 (fstat, result) <- zip statSpecs jackknifeEstimates
---                 return [show fstat, show (fst result), show (snd result), show (fst result / snd result)]
---         if   rawOutput
---         then do
---             putStrLn $ intercalate "\t" tableH
---             forM_ tableB $ \row -> putStrLn (intercalate "\t" row)
---         else putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
---   where
---     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
---     chunkEigenstratByChromosome = view (groupsBy sameChrom)
---     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
---         chrom1 == chrom2
---     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
---     showBlockLogOutput blocks = "computing chunk range " ++ show (blockStartPos (head blocks)) ++ " - " ++
---         show (blockEndPos (head blocks)) ++ ", size " ++ (show . blockSiteCount . head) blocks ++ ", values " ++
---         (show . map blockVal) blocks
+findRelevantPackages :: [EntitySpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
+findRelevantPackages popSpecs packages = do
+    let indNamesStats   = [ind   | EntitySpecInd   ind   <- popSpecs]
+        groupNamesStats = [group | EntitySpecGroup group <- popSpecs]
+    fmap catMaybes . forM packages $ \pac -> do
+        inds <- getIndividuals pac
+        let indNamesPac   = [ind   | EigenstratIndEntry ind _ _     <- inds]
+            groupNamesPac = [group | EigenstratIndEntry _   _ group <- inds]
+        if   not (null (indNamesPac `intersect` indNamesStats)) || not (null (groupNamesPac `intersect` groupNamesStats))
+        then return (Just pac)
+        else return Nothing
 
--- readStatSpecsFromFile :: FilePath -> IO [FStatSpec]
--- readStatSpecsFromFile statSpecsFile = do
---     let multiFstatSpecParser = fStatSpecParser `P.sepBy1` (P.newline *> P.spaces)
---     eitherParseResult <- P.parseFromFile (P.spaces *> multiFstatSpecParser <* P.spaces) statSpecsFile
---     case eitherParseResult of
---         Left err -> throwIO (PoseidonFStatsFormatException (show err))
---         Right r  -> return r
+buildRasFold :: (MonadIO m) => [EigenstratIndEntry] -> Int -> Double -> PopDef -> [PopDef] -> [PopDef] -> Either PoseidonException (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildRasFold indEntries maxK maxM outgroup popLefts popRights = do
+    outgroupI <- getPopIndices indEntries outgroup
+    leftI <- mapM (getPopIndices indEntries) popLefts
+    rightI <- mapM (getPopIndices indEntries) popRights
+    let nL = length popLefts
+        nR = length popRights
+    return $ FoldM (step outgroupI leftI rightI) (initialise nL nR maxK) extract
+  where
+    step :: (MonadIO m) => [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
+        (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
+    step outgroupI leftI rightI (maybeStartPos, _, counts, vals) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+        let newStartPos = case maybeStartPos of
+                Nothing       -> Just (c, p)
+                Just (c', p') -> Just (c', p')
+        let newEndPos = Just (c, p)
+            alleleCountPairs = map (computeAlleleCount genoLine) rightI
+            totalDerived = sum . map fst $ alleleCountPairs
+            totalNonMissing = sum . map snd $ alleleCountPairs
+            totalHaps = 2 * sum (map length rightI)
+            missingness = fromIntegral (totalHaps - totalNonMissing) / fromIntegral totalHaps
+        when (missingness <= maxM) $ do
+            let outgroupFreq = if null outgroupI then Just 0.0 else computeAlleleFreq genoLine outgroupI
+            case outgroupFreq of
+                Nothing -> return ()
+                Just oFreq -> do
+                    -- update counts
+                    forM_ (zip [0..] leftI) $ \(i1, i2) ->
+                        when (any (/= Missing) [genoLine V.! j | j <- i2]) . liftIO $ VUM.modify counts (+1) i1
+                    let directedTotalCount = if oFreq < 0.5 then totalDerived else totalHaps - totalDerived
+                    when (directedTotalCount <= maxK) $ do
+                        -- main loop
+                        let nL = length popLefts
+                            nR = length popRights
+                            kIndexOffset = (directedTotalCount - 2) * nL * nR
+                            leftFreqs = map (computeAlleleFreq genoLine) leftI
+                            rightFreqs = do
+                                r <- rightI
+                                let nrDerived = fst $ computeAlleleCount genoLine r
+                                let n = 2 * length r
+                                return (fromIntegral nrDerived / fromIntegral n)
+                            relevantLeftFreqs  = [(i, x) | (i, Just x) <- zip [0..] leftFreqs,  x > 0.0]
+                            relevantRightFreqs = [(i, x) | (i,      x) <- zip [0..] rightFreqs, x > 0.0]
+                        forM_ relevantLeftFreqs $ \(i, x) ->
+                            forM_ relevantRightFreqs $ \(j, y) -> do
+                                let index = kIndexOffset + i * j
+                                liftIO $ VUM.modify vals (+(x * y)) index
+        return (newStartPos, newEndPos, counts, vals)
+    initialise :: (MonadIO m) => Int -> Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
+    initialise nL nR maxK = do
+        countVec <- liftIO $ VUM.replicate nL 0
+        valVec <- liftIO $ VUM.replicate ((maxK - 1) * nL * nR) 0.0
+        return (Nothing, Nothing, countVec, valVec)
+    extract :: (MonadIO m) => (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
+            m BlockData
+    extract (maybeStartVec, maybeEndVec, counts, vals) = case (maybeStartVec, maybeEndVec) of
+        (Just startPos, Just endPos) -> do
+            let nLefts = VUM.length counts
+                nRights = VUM.length vals `div` (nLefts * (maxK - 1))
+            countsF <- liftIO $ VU.freeze counts
+            valsF <- liftIO $ VU.freeze vals
+            let normalisedVals = do
+                    k <- [0 .. (maxK - 2)]
+                    return $ do
+                        i <- [0 .. nLefts]
+                        return $ do
+                            j <- [0 .. nRights]
+                            let jointIndex = k * nLefts * nRights + i * j
+                            let val = valsF VU.! jointIndex
+                            return $ val / fromIntegral (countsF VU.! i)
+            return $ BlockData startPos endPos (VU.toList countsF) normalisedVals
+        _ -> error "this should never happen"
 
--- computeJackknife :: [Int] -> [Double] -> (Double, Double)
--- computeJackknife weights values =
---     let weights'    = map fromIntegral weights
---         sumWeights  = sum weights'
---         g           = fromIntegral (length weights)
---         theta       = sum [mj * val | (mj, val) <- zip weights' values] / sumWeights
---         sigmaSquare = sum [mj * (val - theta) ^ (2 :: Int) / (sumWeights - mj) | (mj, val) <- zip weights' values] / g
---     in  (theta, sqrt sigmaSquare)
+getPopIndices :: [EigenstratIndEntry] -> PopDef -> Either PoseidonException [Int]
+getPopIndices indEntries = go []
+  where
+    go previousIndices [] = Right previousIndices
+    go previousIndices (PopComponentAdd entity:rest) = do
+        newIndices <- findIndicesForEntity indEntries entity
+        go (sort . nub $ previousIndices ++ newIndices) rest
+    go previousIndices (PopComponentSubtract entity:rest) = do
+        subtractIndices <- findIndicesForEntity indEntries entity
+        go (sort (previousIndices \\ subtractIndices)) rest
+    findIndicesForEntity :: [EigenstratIndEntry] -> EntitySpec -> Either PoseidonException [Int]
+    findIndicesForEntity indEntries es = do
+        let indices = do
+                (i, EigenstratIndEntry indName _ popName) <- zip [0..] indEntries
+                True <- case es of
+                    EntitySpecGroup name -> return (name == popName)
+                    EntitySpecInd   name -> return (name == indName)
+                return i
+        if null indices then
+            case es of
+                EntitySpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
+                EntitySpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
+        else Right indices
 
--- collectStatSpecGroups :: [FStatSpec] -> [PopSpec]
--- collectStatSpecGroups statSpecs = nub . concat $ do
---     stat <- statSpecs
---     case stat of
---         F4Spec  a b c d -> return [a, b, c, d]
---         F3Spec  a b c   -> return [a, b, c]
---         F2Spec  a b     -> return [a, b]
---         PWMspec a b     -> return [a, b]
-
--- findRelevantPackages :: [PopSpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
--- findRelevantPackages popSpecs packages = do
---     let indNamesStats   = [ind   | PopSpecInd   ind   <- popSpecs]
---         groupNamesStats = [group | PopSpecGroup group <- popSpecs]
---     fmap catMaybes . forM packages $ \pac -> do
---         inds <- getIndividuals pac
---         let indNamesPac   = [ind   | EigenstratIndEntry ind _ _     <- inds]
---             groupNamesPac = [group | EigenstratIndEntry _   _ group <- inds]
---         if   length (intersect indNamesPac indNamesStats) > 0 || length (intersect groupNamesPac groupNamesStats) > 0
---         then return (Just pac)
---         else return Nothing
+computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
+computeAlleleCount line indices =
+    let nrNonMissing = length . filter (/=Missing) . map (line V.!) $ indices
+        nrDerived = sum $ do
+            i <- indices
+            case line V.! i of
+                HomRef  -> return (0 :: Int)
+                Het     -> return 1
+                HomAlt  -> return 2
+                Missing -> return 0
+    in  (nrDerived, nrNonMissing)

@@ -1,29 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           FStats                          (FStatSpec (..),
-                                                  FstatsOptions (..),
-                                                  fStatSpecParser, runFstats,
-                                                  runParser)
-import Utils (JackknifeMode(..))
+import           FStats                     (FStatSpec (..), FstatsOptions (..),
+                                             fStatSpecParser, runFstats,
+                                             runParser)
+import           RAS                        (RASOptions(..), runRAS)
+import           Utils                      (JackknifeMode (..))
 
-import           Paths_poseidon_analysis_hs      (version)
-import           Poseidon.PoseidonVersion        (showPoseidonVersion,
-                                                  validPoseidonVersions)
-import           Poseidon.Utils                  (PoseidonException (..),
-                                                  renderPoseidonException)
+import           Paths_poseidon_analysis_hs (version)
+import           Poseidon.PoseidonVersion   (showPoseidonVersion,
+                                             validPoseidonVersions)
+import           Poseidon.Utils             (PoseidonException (..),
+                                             renderPoseidonException)
 
-import Control.Applicative ((<|>))
-import           Control.Exception               (catch)
-import           Data.ByteString.Char8           (pack, splitWith)
-import           Data.List                       (intercalate)
-import           Data.Version                    (showVersion)
-import qualified Options.Applicative             as OP
-import           SequenceFormats.Utils           (Chrom (..))
-import           System.Exit                     (exitFailure)
-import           System.IO                       (hPutStrLn, stderr)
-import           Text.Read                       (readEither)
+import           Control.Applicative        ((<|>))
+import           Control.Exception          (catch)
+import           Data.ByteString.Char8      (pack, splitWith)
+import           Data.List                  (intercalate)
+import           Data.Version               (showVersion)
+import qualified Options.Applicative        as OP
+import           SequenceFormats.Utils      (Chrom (..))
+import           System.Exit                (exitFailure)
+import           System.IO                  (hPutStrLn, stderr)
+import           Text.Read                  (readEither)
 
 data Options = CmdFstats FstatsOptions
+    | CmdRAS RASOptions
 
 main :: IO ()
 main = do
@@ -41,6 +42,7 @@ main = do
 runCmd :: Options -> IO ()
 runCmd o = case o of
     CmdFstats opts -> runFstats opts
+    CmdRAS opts    -> runRAS opts
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
