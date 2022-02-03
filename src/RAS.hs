@@ -26,7 +26,7 @@ import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Yaml                   (decodeEither')
 import           Lens.Family2                (view)
 
-import           Pipes                       ((>->))
+import           Pipes                       ((>->), cat)
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
@@ -53,7 +53,8 @@ data RASOptions = RASOptions
     , _optPopConfig      :: PopConfig
     , _optMaxCutoff      :: Int
     , _optMaxMissingness :: Double
-    , _optTableOutFile      :: FilePath
+    , _optTableOutFile   :: FilePath
+    , _optMaxSnps        :: Maybe Int
     }
     deriving (Show)
 
@@ -121,6 +122,7 @@ runRAS rasOpts = do
     blockData <- runSafeT $ do
         (eigenstratIndEntries, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
         let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
+                >-> capNrSnps (_optMaxSnps rasOpts)
             eigenstratProdInChunks = case _optJackknifeMode rasOpts of
                 JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                 JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
@@ -146,13 +148,13 @@ runRAS rasOpts = do
                     return (computeJackknife counts vals, computeJackknife counts cumulVals)
     let tableH = ["Left", "Right", "k", "Cumulative", "RAS", "StdErr"]
         tableB = do
+            cumul <- [False, True]
             (i, popLeft) <- zip [0..] popLefts
             (j, popRight) <- zip [0..] popRights
             k <- [0 .. (maxK - 2)]
-            cumul <- [False, True]
             let jne = ((jackknifeEstimates !! k) !! i) !! j
-            let (val, err) = if cumul then fst jne else snd jne
-            return [show popLeft, show popRight, show k, show cumul, show val, show err]
+            let (val, err) = if cumul then snd jne else fst jne
+            return [show popLeft, show popRight, show (k + 2), show cumul, show val, show err]
     let colSpecs = replicate 6 (column expand def def def)
     putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
     withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
@@ -161,6 +163,8 @@ runRAS rasOpts = do
     return ()
   where
     chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
+    capNrSnps Nothing = cat
+    capNrSnps (Just n) = P.take n
     chunkEigenstratByChromosome = view (groupsBy sameChrom)
     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
         chrom1 == chrom2
@@ -209,16 +213,17 @@ buildRasFold indEntries maxK maxM outgroup popLefts popRights = do
             totalNonMissing = sum . map snd $ alleleCountPairs
             totalHaps = 2 * sum (map length rightI)
             missingness = fromIntegral (totalHaps - totalNonMissing) / fromIntegral totalHaps
+        -- liftIO $ hPutStrLn stderr (show (totalDerived, totalNonMissing, totalHaps, missingness))
         when (missingness <= maxM) $ do
             let outgroupFreq = if null outgroupI then Just 0.0 else computeAlleleFreq genoLine outgroupI
             case outgroupFreq of
                 Nothing -> return ()
                 Just oFreq -> do
                     -- update counts
-                    forM_ (zip [0..] leftI) $ \(i1, i2) ->
-                        when (any (/= Missing) [genoLine V.! j | j <- i2]) . liftIO $ VUM.modify counts (+1) i1
+                    forM_ (zip [0..] leftI) $ \(i1, i2s) ->
+                        when (any (/= Missing) [genoLine V.! j | j <- i2s]) . liftIO $ VUM.modify counts (+1) i1
                     let directedTotalCount = if oFreq < 0.5 then totalDerived else totalHaps - totalDerived
-                    when (directedTotalCount <= maxK) $ do
+                    when (directedTotalCount >= 2 && directedTotalCount <= maxK) $ do
                         -- main loop
                         let nL = length popLefts
                             nR = length popRights
@@ -271,4 +276,4 @@ computeAlleleCount line indices =
                 Het     -> return 1
                 HomAlt  -> return 2
                 Missing -> return 0
-    in  (nrDerived, nrNonMissing)
+    in  (nrDerived, 2 * nrNonMissing)

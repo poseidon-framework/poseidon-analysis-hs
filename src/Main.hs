@@ -140,7 +140,8 @@ rasOptParser = RASOptions <$>
     parsePopConfig <*>
     parseMaxCutoff <*>
     parseMaxMissingness <*>
-    parseTableOutFile
+    parseTableOutFile <*>
+    parseMaxSnps
 
 parsePopConfig :: OP.Parser PopConfig
 parsePopConfig = parsePopConfigDirect <|> parsePopConfigFile
@@ -189,3 +190,8 @@ parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm
 parseTableOutFile :: OP.Parser FilePath 
 parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
     OP.help "the file to which results are written as tab-separated file")
+
+parseMaxSnps :: OP.Parser (Maybe Int)
+parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
+    OP.help "define a maximum nr of snps to pass." <>
+    OP.value Nothing <> OP.internal)

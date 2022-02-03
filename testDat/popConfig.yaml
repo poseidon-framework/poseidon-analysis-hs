@@ -2,7 +2,9 @@ popLefts:
 - <I13721>
 - <I14000>
 - <I13722>
+- <Iceman.SG>
 popRights:
 - Mbuti
 - Mixe
 - Spanish
+outgroup: <Chimp.REF>
