@@ -3,9 +3,9 @@
 module RAS where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
-                                              computeAlleleFreq, computeJackknife)
+                                              computeAlleleFreq, computeJackknife, PopSpec(..),
+                                              popSpecParser, getPopIndices)
 
-import           Control.Applicative         ((<|>))
 import           Control.Exception           (Exception, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
@@ -16,8 +16,7 @@ import           Data.Aeson                  (FromJSON, Object, parseJSON,
                                               withObject, (.:))
 import           Data.Aeson.Types            (Parser)
 import qualified Data.ByteString             as B
-import           Data.Char                   (isSpace)
-import           Data.List                   (intersect, nub, sort, (\\), intercalate)
+import           Data.List                   (intersect, intercalate)
 import           Data.Maybe                  (catMaybes)
 import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
@@ -46,7 +45,6 @@ import           System.IO                   (hPutStrLn, stderr, withFile, IOMod
 import           Text.Layout.Table          (asciiRoundS, column, def, expand,
                                              rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
-import qualified Text.Parsec.String          as PS
 
 data RASOptions = RASOptions
     { _optBaseDirs       :: [FilePath]
@@ -59,65 +57,35 @@ data RASOptions = RASOptions
     }
     deriving (Show)
 
-data PopConfig = PopConfigDirect [PopDef] [PopDef] PopDef
+data PopConfig = PopConfigDirect [PopSpec] [PopSpec] PopSpec
     | PopConfigFile FilePath
     deriving (Show)
 
-type PopDef = [PopComponent]
-
-data PopComponent = PopComponentAdd EntitySpec
-    | PopComponentSubtract EntitySpec
-    deriving (Show)
-
--- | A datatype to represent a group or an individual
-data EntitySpec = EntitySpecGroup String
-    | EntitySpecInd String
-    deriving (Eq)
-
-instance Show EntitySpec where
-    show (EntitySpecGroup n) = n
-    show (EntitySpecInd   n) = "<" ++ n ++ ">"
-
 data PopConfigYamlStruct = PopConfigYamlStruct
-    { popConfigLefts    :: [PopDef]
-    , popConfigRights   :: [PopDef]
-    , popConfigOutgroup :: PopDef
+    { popConfigLefts    :: [PopSpec]
+    , popConfigRights   :: [PopSpec]
+    , popConfigOutgroup :: PopSpec
     }
 
 instance FromJSON PopConfigYamlStruct where
     parseJSON = withObject "PopConfigYamlStruct" $ \v -> PopConfigYamlStruct
-        <$> parsePopDefsFromJSON v "popLefts"
-        <*> parsePopDefsFromJSON v "popRights"
-        <*> parsePopDefFromJSON v "outgroup"
+        <$> parsePopSpecsFromJSON v "popLefts"
+        <*> parsePopSpecsFromJSON v "popRights"
+        <*> parsePopSpecFromJSON v "outgroup"
       where
-        parsePopDefFromJSON :: Object -> Text -> Parser PopDef
-        parsePopDefFromJSON v label = do
+        parsePopSpecFromJSON :: Object -> Text -> Parser PopSpec
+        parsePopSpecFromJSON v label = do
             popDefString <- v .: label
-            case parsePopDef popDefString of
-                Left err -> fail err
+            case P.runParser popSpecParser () "" popDefString of
+                Left err -> fail (show err)
                 Right p  -> return p
-        parsePopDefsFromJSON :: Object -> Text -> Parser [PopDef]
-        parsePopDefsFromJSON v label = do
+        parsePopSpecsFromJSON :: Object -> Text -> Parser [PopSpec]
+        parsePopSpecsFromJSON v label = do
             popDefStrings <- v .: label
             forM popDefStrings $ \popDefString -> do
-                case parsePopDef popDefString of
-                    Left err -> fail err
+                case P.runParser popSpecParser () "" popDefString of
+                    Left err -> fail (show err)
                     Right p  -> return p
-
-parsePopDef :: String -> Either String PopDef
-parsePopDef s = case P.runParser popDefParser () "" s of
-    Left p  -> Left (show p)
-    Right x -> Right x
-
-popDefParser :: PS.Parser PopDef
-popDefParser = (componentParserSubtract <|> componentParserAdd) `P.sepBy` P.char ','
-  where
-    componentParserSubtract = P.char '!' *> (PopComponentSubtract <$> componentEntityParser)
-    componentParserAdd = PopComponentAdd <$> componentEntityParser
-    componentEntityParser = entityIndParser <|> entityGroupParser
-    entityIndParser = EntitySpecInd <$> P.between (P.char '<') (P.char '>') parseName
-    entityGroupParser = EntitySpecGroup <$> parseName
-    parseName = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` [',', '<', '>'])))
 
 data RascalException = PopConfigYamlException FilePath String
     deriving (Show)
@@ -145,7 +113,7 @@ runRAS rasOpts = do
     hPutStrLn stderr $ "Found right populations: " ++ show popRights
     hPutStrLn stderr $ "Found outgroup: " ++ show outgroup
 
-    let collectedStats = collectStatEntities (popLefts ++ popRights ++ [outgroup])
+    let collectedStats = popLefts ++ popRights ++ [outgroup]
     relevantPackages <- findRelevantPackages collectedStats allPackages
     hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
     forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
@@ -200,7 +168,7 @@ runRAS rasOpts = do
     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block
 
-readPopConfig :: FilePath -> IO ([PopDef], [PopDef], PopDef)
+readPopConfig :: FilePath -> IO ([PopSpec], [PopSpec], PopSpec)
 readPopConfig fn = do
     bs <- B.readFile fn
     PopConfigYamlStruct pl pr og <- case decodeEither' bs of
@@ -208,16 +176,10 @@ readPopConfig fn = do
         Right x  -> return x
     return (pl, pr, og)
 
-collectStatEntities :: [PopDef] -> [EntitySpec]
-collectStatEntities popDefs = do
-    pd <- popDefs
-    PopComponentAdd e <- pd
-    return e
-
-findRelevantPackages :: [EntitySpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
+findRelevantPackages :: [PopSpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
 findRelevantPackages popSpecs packages = do
-    let indNamesStats   = [ind   | EntitySpecInd   ind   <- popSpecs]
-        groupNamesStats = [group | EntitySpecGroup group <- popSpecs]
+    let indNamesStats   = [ind   | PopSpecInd   ind   <- popSpecs]
+        groupNamesStats = [group | PopSpecGroup group <- popSpecs]
     fmap catMaybes . forM packages $ \pac -> do
         inds <- getIndividuals pac
         let indNamesPac   = [ind   | EigenstratIndEntry ind _ _     <- inds]
@@ -226,14 +188,14 @@ findRelevantPackages popSpecs packages = do
         then return (Just pac)
         else return Nothing
 
-buildRasFold :: (MonadIO m) => [EigenstratIndEntry] -> Int -> Double -> PopDef -> [PopDef] -> [PopDef] -> Either PoseidonException (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildRasFold :: (MonadIO m) => [EigenstratIndEntry] -> Int -> Double -> PopSpec -> [PopSpec] -> [PopSpec] -> Either PoseidonException (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildRasFold indEntries maxK maxM outgroup popLefts popRights = do
     outgroupI <- getPopIndices indEntries outgroup
     leftI <- mapM (getPopIndices indEntries) popLefts
     rightI <- mapM (getPopIndices indEntries) popRights
     let nL = length popLefts
         nR = length popRights
-    return $ FoldM (step outgroupI leftI rightI) (initialise nL nR maxK) extract
+    return $ FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
   where
     step :: (MonadIO m) => [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
         (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
@@ -274,8 +236,8 @@ buildRasFold indEntries maxK maxM outgroup popLefts popRights = do
                                 let index = kIndexOffset + i * j
                                 liftIO $ VUM.modify vals (+(x * y)) index
         return (newStartPos, newEndPos, counts, vals)
-    initialise :: (MonadIO m) => Int -> Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
-    initialise nL nR maxK = do
+    initialise :: (MonadIO m) => Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
+    initialise nL nR = do
         countVec <- liftIO $ VUM.replicate nL 0
         valVec <- liftIO $ VUM.replicate ((maxK - 1) * nL * nR) 0.0
         return (Nothing, Nothing, countVec, valVec)
@@ -298,30 +260,6 @@ buildRasFold indEntries maxK maxM outgroup popLefts popRights = do
                             return $ val / fromIntegral (countsF VU.! i)
             return $ BlockData startPos endPos (VU.toList countsF) normalisedVals
         _ -> error "this should never happen"
-
-getPopIndices :: [EigenstratIndEntry] -> PopDef -> Either PoseidonException [Int]
-getPopIndices indEntries = go []
-  where
-    go previousIndices [] = Right previousIndices
-    go previousIndices (PopComponentAdd entity:rest) = do
-        newIndices <- findIndicesForEntity indEntries entity
-        go (sort . nub $ previousIndices ++ newIndices) rest
-    go previousIndices (PopComponentSubtract entity:rest) = do
-        subtractIndices <- findIndicesForEntity indEntries entity
-        go (sort (previousIndices \\ subtractIndices)) rest
-    findIndicesForEntity :: [EigenstratIndEntry] -> EntitySpec -> Either PoseidonException [Int]
-    findIndicesForEntity indEntries es = do
-        let indices = do
-                (i, EigenstratIndEntry indName _ popName) <- zip [0..] indEntries
-                True <- case es of
-                    EntitySpecGroup name -> return (name == popName)
-                    EntitySpecInd   name -> return (name == indName)
-                return i
-        if null indices then
-            case es of
-                EntitySpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
-                EntitySpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
-        else Right indices
 
 computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
 computeAlleleCount line indices =

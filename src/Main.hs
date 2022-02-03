@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import           FStats                     (FStatSpec (..), FstatsOptions (..),
-                                             fStatSpecParser, runFstats,
-                                             runParser)
-import           RAS                        (RASOptions(..), runRAS)
-import           Utils                      (JackknifeMode (..))
+                                             fStatSpecParser, runFstats)
+import           RAS                        (PopConfig (..), RASOptions (..),
+                                             runRAS)
+import           Utils                      (JackknifeMode (..), PopSpec (..), runParser, popSpecParser)
 
 import           Paths_poseidon_analysis_hs (version)
 import           Poseidon.PoseidonVersion   (showPoseidonVersion,
@@ -64,10 +64,13 @@ renderVersion =
 
 optParser :: OP.Parser Options
 optParser = OP.subparser $
-    OP.command "fstats" fstatsOptInfo
+    OP.command "fstats" fstatsOptInfo <>
+    OP.command "ras" rasOptInfo
   where
     fstatsOptInfo = OP.info (OP.helper <*> (CmdFstats <$> fstatsOptParser))
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
+    rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
+        (OP.progDesc "Compute RAS statistics on groups and individuals within and across Poseidon packages")
 
 
 fstatsOptParser :: OP.Parser FstatsOptions
@@ -129,42 +132,60 @@ parseRawOutput = OP.switch (
     OP.help "output table as tsv without header. Useful for piping into grep or awk"
     )
 
--- parsePopConfig :: OP.Parser PopConfig
--- parsePopConfig = parsePopConfigDirect <|> parsePopConfigFile
---   where
---     parsePopConfigDirect = PopConfigDirect <$> OP.some parseLeftPop <*> OP.some parseRightPop
---     parsePopConfigFile = PopConfigFile <$> OP.option OP.str (OP.long "popConfigFile" <>
---         OP.help "a file containing the population configuration")
+rasOptParser :: OP.Parser RASOptions
+rasOptParser = RASOptions <$>
+    parseBasePaths <*>
+    parseJackknife <*>
+    parseExcludeChroms <*>
+    parsePopConfig <*>
+    parseMaxCutoff <*>
+    parseMaxMissingness <*>
+    parseTableOutFile
 
--- parseLeftPop :: OP.Parser PopDef
--- parseLeftPop = OP.option (OP.eitherReader parsePopDef) (OP.long "popLeft" <> OP.short 'l' <>
---     OP.help "Define a left population. can be given multiple times. A single population can be defined in their simplest form my just entering a group label, such as \"French\". \
---     \A single individual can be entered within angular brackets, such as \"<I123>\". More complex group definitions can \
---     \involve multiple groups or individuals that are added or subtracted, using a comma-separated list of entities \
---     \(groups or individuals), and using the \"!\" symbol to mark an entity to exclude from the definition. \
---     \Example: \"French,!<I1234>,!<I1235>,Spanish\". Here, French is added as group, then two individuals are removed, \
---     \and then Spanish is added. These operations are always executed in the order they appear in the definition. \
---     \Note it is also possible to define completely new groups by adding up specific \
---     \individuals, such as \"<I123>,<I124>,<I125>\". Note: In bash or zsh, you need to surround group definitions \
---     \using single quotes!")
+parsePopConfig :: OP.Parser PopConfig
+parsePopConfig = parsePopConfigDirect <|> parsePopConfigFile
+  where
+    parsePopConfigDirect = PopConfigDirect <$> OP.some parseLeftPop <*> OP.some parseRightPop <*> parseOutgroup
+    parsePopConfigFile = PopConfigFile <$> OP.option OP.str (OP.long "popConfigFile" <>
+        OP.help "a file containing the population configuration")
 
--- parseRightPop :: OP.Parser PopDef
--- parseRightPop = OP.option (OP.eitherReader parsePopDef) (OP.long "popRight" <> OP.short 'r' <>
---     OP.help "Define a right population. can be given multiple times. The same rules for complex compositions \
---     \apply as with --popLeft, see above.")
+parseLeftPop :: OP.Parser PopSpec
+parseLeftPop = OP.option (OP.eitherReader readPopSpecString) (OP.long "popLeft" <> OP.short 'l' <>
+    OP.help "Define a left population. can be given multiple times. A single population can be defined in their simplest form my just entering a group label, such as \"French\". \
+    \A single individual can be entered within angular brackets, such as \"<I123>\". More complex group definitions can \
+    \involve multiple groups or individuals that are added or subtracted, using a comma-separated list of entities \
+    \(groups or individuals), and using the \"!\" symbol to mark an entity to exclude from the definition. \
+    \Example: \"French,!<I1234>,!<I1235>,Spanish\". Here, French is added as group, then two individuals are removed, \
+    \and then Spanish is added. These operations are always executed in the order they appear in the definition. \
+    \Note it is also possible to define completely new groups by adding up specific \
+    \individuals, such as \"<I123>,<I124>,<I125>\". Note: In bash or zsh, you need to surround group definitions \
+    \using single quotes!")
 
--- parseOutgroup :: OP.Parser PopDef
--- parseOutgroup = OP.option (OP.eitherReader parsePopDef) (OP.long "outgroup" <> OP.short 'o' <>
---     OP.help "Define an outgroup to polarise allele frequencies with. The same rules for complex compositions \
---     \apply as with --popLeft, see above.")
+readPopSpecString :: String -> Either String PopSpec
+readPopSpecString s = case runParser popSpecParser () "" s of
+    Left p  -> Left (show p)
+    Right x -> Right x
 
--- parseMinCutoff :: OP.Parser Int
--- parseMinCutoff = OP.option OP.auto (OP.long "minCutoff" <>
---     OP.help "define a minimal allele-count cutoff for the RAS statistics. " <>
---     OP.value 0 <> OP.showDefault)
+parseRightPop :: OP.Parser PopSpec
+parseRightPop = OP.option (OP.eitherReader readPopSpecString) (OP.long "popRight" <> OP.short 'r' <>
+    OP.help "Define a right population. can be given multiple times. The same rules for complex compositions \
+    \apply as with --popLeft, see above.")
 
--- parseMaxCutoff :: OP.Parser Int
--- parseMaxCutoff = OP.option OP.auto (OP.long "maxCutoff" <>
---     OP.help "define a maximal allele-count cutoff for the RAS statistics. " <>
---     OP.value 10 <> OP.showDefault)
+parseOutgroup :: OP.Parser PopSpec
+parseOutgroup = OP.option (OP.eitherReader readPopSpecString) (OP.long "outgroup" <> OP.short 'o' <>
+    OP.help "Define an outgroup to polarise allele frequencies with. The same rules for complex compositions \
+    \apply as with --popLeft, see above.")
 
+parseMaxCutoff :: OP.Parser Int
+parseMaxCutoff = OP.option OP.auto (OP.long "maxAlleleCount" <> OP.short 'k' <>
+    OP.help "define a maximal allele-count cutoff for the RAS statistics. " <>
+    OP.value 10 <> OP.showDefault)
+
+parseMaxMissingness :: OP.Parser Double
+parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm' <>
+    OP.help "define a maximal missingness for the right populations in the RAS statistics." <>
+    OP.value 0.1 <> OP.showDefault)
+
+parseTableOutFile :: OP.Parser FilePath 
+parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
+    OP.help "the file to which results are written as tab-separated file")

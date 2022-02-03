@@ -5,25 +5,22 @@ module FStats (
     , FstatsOptions(..)
     , JackknifeMode(..)
     , fStatSpecParser
-    , P.runParser
     , runFstats
     , readStatSpecsFromFile
 ) where
 
 import           Utils                      (GenomPos, JackknifeMode (..),
-                                             PopSpec (..), parsePopSpecsN, computeAlleleFreq, 
-                                             computeJackknife)
+                                             PopSpec (..), popSpecsNparser, computeAlleleFreq, 
+                                             computeJackknife, getPopIndices)
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (throwIO)
 import           Control.Foldl              (Fold (..), list, purely)
 import           Control.Monad              (forM, forM_)
 import           Control.Monad.Catch        (throwM)
-import           Data.Char                  (isSpace)
 import           Data.List                  (intercalate, intersect, nub,
                                              transpose)
 import           Data.Maybe                 (catMaybes)
-import           Data.Vector                ((!))
 import           Lens.Family2               (view)
 import           Pipes                      ((>->))
 import           Pipes.Group                (chunksOf, folds, groupsBy)
@@ -38,7 +35,7 @@ import           Poseidon.Package           (PackageReadOptions (..),
 import           Poseidon.Utils             (PoseidonException (..))
 import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
                                              EigenstratSnpEntry (..),
-                                             GenoEntry (..), GenoLine)
+                                             GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 import           System.IO                  (hPutStrLn, stderr)
 import           Text.Layout.Table          (asciiRoundS, column, def, expand,
@@ -92,26 +89,26 @@ fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecPars
 f4SpecParser :: P.Parser FStatSpec
 f4SpecParser = do
     _ <- P.string "F4"
-    [a, b, c, d] <- P.between (P.char '(') (P.char ')') (parsePopSpecsN 4)
+    [a, b, c, d] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 4)
     return $ F4Spec a b c d
 
 
 f3SpecParser :: P.Parser FStatSpec
 f3SpecParser = do
     _ <- P.string "F3"
-    [a, b, c] <- P.between (P.char '(') (P.char ')') (parsePopSpecsN 3)
+    [a, b, c] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 3)
     return $ F3Spec a b c
 
 f2SpecParser :: P.Parser FStatSpec
 f2SpecParser = do
     _ <- P.string "F2"
-    [a, b] <- P.between (P.char '(') (P.char ')') (parsePopSpecsN 2)
+    [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
     return $ F2Spec a b
 
 pwmSpecParser :: P.Parser FStatSpec
 pwmSpecParser = do
     _ <- P.string "PWM"
-    [a, b] <- P.between (P.char '(') (P.char ')') (parsePopSpecsN 2)
+    [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
     return $ PWMspec a b
 
 statSpecsFold :: [EigenstratIndEntry] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
@@ -157,21 +154,6 @@ computeFStat fStat gL = case fStat of
     computeF3  a b c   = (c - a) * (c - b)
     computeF2  a b     = (a - b) * (a - b)
     computePWM a b     = a * (1.0 - b) + (1.0 - a) * b
-
-
-getPopIndices :: [EigenstratIndEntry] -> PopSpec -> Either PoseidonException [Int]
-getPopIndices indEntries popSpec =
-    let ret = do
-            (i, EigenstratIndEntry indName _ popName) <- zip [0..] indEntries
-            True <- case popSpec of
-                PopSpecGroup name -> return (name == popName)
-                PopSpecInd   name -> return (name == indName)
-            return i
-    in  if null ret
-        then case popSpec of
-            PopSpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
-            PopSpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
-        else Right ret
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {

@@ -1,11 +1,13 @@
-module Utils (JackknifeMode(..), PopSpec(..), GenomPos, parsePopSpecsN, computeAlleleFreq, computeJackknife) where
+module Utils (JackknifeMode(..), PopSpec(..), GenomPos, popSpecsNparser, computeAlleleFreq,
+computeJackknife, getPopIndices, popSpecParser, P.runParser) where
 
-import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
+import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine, EigenstratIndEntry(..))
 import           SequenceFormats.Utils      (Chrom)
 
 import           Control.Applicative        ((<|>))
 import           Data.Char                  (isSpace)
 import           Data.Vector                ((!))
+import           Poseidon.Utils             (PoseidonException (..))
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
 
@@ -34,20 +36,20 @@ data BlockData = BlockData
     }
     deriving (Show)
 
-parsePopSpecsN :: Int -> P.Parser [PopSpec]
-parsePopSpecsN n = sepByN n parsePopSpec (P.char ',' <* P.spaces)
+popSpecsNparser :: Int -> P.Parser [PopSpec]
+popSpecsNparser n = sepByNparser n popSpecParser (P.char ',' <* P.spaces)
 
-sepByN :: Int -> P.Parser a -> P.Parser sep -> P.Parser [a]
-sepByN 0 _ _ = return []
-sepByN 1 p _ = fmap (: []) p
-sepByN n p s = do
+sepByNparser :: Int -> P.Parser a -> P.Parser sep -> P.Parser [a]
+sepByNparser 0 _ _ = return []
+sepByNparser 1 p _ = fmap (: []) p
+sepByNparser n p s = do
     x <- p
     _ <- s
-    xs <- sepByN (n - 1) p s
+    xs <- sepByNparser (n - 1) p s
     return (x:xs)
 
-parsePopSpec :: P.Parser PopSpec
-parsePopSpec = parseIndividualSpec <|> parseGroupSpec
+popSpecParser :: P.Parser PopSpec
+popSpecParser = parseIndividualSpec <|> parseGroupSpec
   where
     parseIndividualSpec = PopSpecInd <$> P.between (P.char '<') (P.char '>') parseName
     parseGroupSpec = PopSpecGroup <$> parseName
@@ -76,3 +78,17 @@ computeJackknife weights values =
         theta       = sum [mj * val | (mj, val) <- zip weights' values] / sumWeights
         sigmaSquare = sum [mj * (val - theta) ^ (2 :: Int) / (sumWeights - mj) | (mj, val) <- zip weights' values] / g
     in  (theta, sqrt sigmaSquare)
+
+getPopIndices :: [EigenstratIndEntry] -> PopSpec -> Either PoseidonException [Int]
+getPopIndices indEntries popSpec =
+    let ret = do
+            (i, EigenstratIndEntry indName _ popName) <- zip [0..] indEntries
+            True <- case popSpec of
+                PopSpecGroup name -> return (name == popName)
+                PopSpecInd   name -> return (name == indName)
+            return i
+    in  if null ret
+        then case popSpec of
+            PopSpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
+            PopSpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
+        else Right ret
