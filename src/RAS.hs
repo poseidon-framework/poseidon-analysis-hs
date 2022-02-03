@@ -17,7 +17,7 @@ import           Data.Aeson                  (FromJSON, Object, parseJSON,
 import           Data.Aeson.Types            (Parser)
 import qualified Data.ByteString             as B
 import           Data.Char                   (isSpace)
-import           Data.List                   (intersect, nub, sort, (\\))
+import           Data.List                   (intersect, nub, sort, (\\), intercalate)
 import           Data.Maybe                  (catMaybes)
 import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
@@ -42,7 +42,9 @@ import           SequenceFormats.Eigenstrat  (EigenstratIndEntry (..),
                                               EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom (..))
-import           System.IO                   (hPutStrLn, stderr)
+import           System.IO                   (hPutStrLn, stderr, withFile, IOMode(..))
+import           Text.Layout.Table          (asciiRoundS, column, def, expand,
+                                             rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
 import qualified Text.Parsec.String          as PS
 
@@ -53,6 +55,7 @@ data RASOptions = RASOptions
     , _optPopConfig      :: PopConfig
     , _optMaxCutoff      :: Int
     , _optMaxMissingness :: Double
+    , _optTableOutFile      :: FilePath
     }
     deriving (Show)
 
@@ -172,7 +175,21 @@ runRAS rasOpts = do
                         cumulVals = do
                             bd <- blockData
                             return $ sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]]
-                    return $ (computeJackknife counts vals, computeJackknife counts cumulVals)
+                    return (computeJackknife counts vals, computeJackknife counts cumulVals)
+    let tableH = ["Left", "Right", "k", "Cumulative", "RAS", "StdErr"]
+        tableB = do
+            (i, popLeft) <- zip [0..] popLefts
+            (j, popRight) <- zip [0..] popRights
+            k <- [0 .. (maxK - 2)]
+            cumul <- [False, True]
+            let jne = ((jackknifeEstimates !! k) !! i) !! j
+            let (val, err) = if cumul then fst jne else snd jne
+            return [show popLeft, show popRight, show k, show cumul, show val, show err]
+    let colSpecs = replicate 6 (column expand def def def)
+    putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+    withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
+        hPutStrLn h $ intercalate "\t" tableH
+        forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
     return ()
   where
     chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
