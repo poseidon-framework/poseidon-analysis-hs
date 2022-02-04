@@ -10,8 +10,10 @@ module FStats (
 ) where
 
 import           Utils                      (GenomPos, JackknifeMode (..),
-                                             PopSpec (..), popSpecsNparser, computeAlleleFreq, 
-                                             computeJackknife, getPopIndices)
+                                             PopSpec (..), computeAlleleFreq,
+                                             computeJackknife,
+                                             findRelevantPackages,
+                                             getPopIndices, popSpecsNparser)
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (throwIO)
@@ -26,6 +28,7 @@ import           Pipes                      ((>->))
 import           Pipes.Group                (chunksOf, folds, groupsBy)
 import qualified Pipes.Prelude              as P
 import           Pipes.Safe                 (runSafeT)
+import           Poseidon.Janno             (JannoRow (..))
 import           Poseidon.Package           (PackageReadOptions (..),
                                              PoseidonPackage (..),
                                              defaultPackageReadOptions,
@@ -34,8 +37,7 @@ import           Poseidon.Package           (PackageReadOptions (..),
                                              readPoseidonPackageCollection)
 import           Poseidon.Utils             (PoseidonException (..))
 import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
-                                             EigenstratSnpEntry (..),
-                                             GenoLine)
+                                             EigenstratSnpEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 import           System.IO                  (hPutStrLn, stderr)
 import           Text.Layout.Table          (asciiRoundS, column, def, expand,
@@ -46,18 +48,23 @@ import qualified Text.Parsec.String         as P
 -- | A datatype representing the command line options for the F-Statistics command
 data FstatsOptions = FstatsOptions
     { _foBaseDirs        :: [FilePath] -- ^ the list of base directories to search for packages
+    -- ^ The way the Jackknife is performed
     , _foJackknifeMode   :: JackknifeMode -- ^ The way the Jackknife is performed
+    -- ^ a list of chromosome names to exclude from the computation
     , _foExcludeChroms   :: [Chrom] -- ^ a list of chromosome names to exclude from the computation
+    -- ^ A list of F-statistics to compute
     , _foStatSpecsDirect :: [FStatSpec] -- ^ A list of F-statistics to compute
+    -- ^ a file listing F-statistics to compute
     , _foStatSpecsFile   :: Maybe FilePath -- ^ a file listing F-statistics to compute
+    -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     , _foRawOutput       :: Bool -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     }
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
-data FStatSpec = F4Spec PopSpec PopSpec PopSpec PopSpec -- ^ F4 Statistics
-    | F3Spec PopSpec PopSpec PopSpec -- ^ F3 Statistics
-    | F2Spec PopSpec PopSpec -- ^ F2 Statistics
-    | PWMspec PopSpec PopSpec -- ^ Pairwise Mismatch Rates between two groups
+data FStatSpec = F4Spec PopSpec PopSpec PopSpec PopSpec
+    | F3Spec PopSpec PopSpec PopSpec
+    | F2Spec PopSpec PopSpec
+    | PWMspec PopSpec PopSpec
     deriving (Eq)
 
 instance Show FStatSpec where
@@ -111,18 +118,18 @@ pwmSpecParser = do
     [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
     return $ PWMspec a b
 
-statSpecsFold :: [EigenstratIndEntry] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
-statSpecsFold indEntries fStatSpecs = do
-    listOfFolds <- mapM (statSpecFold indEntries) fStatSpecs
+statSpecsFold :: [JannoRow] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
+statSpecsFold jointJanno fStatSpecs = do
+    listOfFolds <- mapM (statSpecFold jointJanno) fStatSpecs
     return $ sequenceA listOfFolds
 
-statSpecFold :: [EigenstratIndEntry] -> FStatSpec -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) BlockData)
-statSpecFold iE fStatSpec = do
+statSpecFold :: [JannoRow] -> FStatSpec -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) BlockData)
+statSpecFold jJ fStatSpec = do
     fStat <- case fStatSpec of
-        F4Spec  a b c d -> F4  <$> getPopIndices iE a <*> getPopIndices iE b <*> getPopIndices iE c <*> getPopIndices iE d
-        F3Spec  a b c   -> F3  <$> getPopIndices iE a <*> getPopIndices iE b <*> getPopIndices iE c
-        F2Spec  a b     -> F2  <$> getPopIndices iE a <*> getPopIndices iE b
-        PWMspec a b     -> PWM <$> getPopIndices iE a <*> getPopIndices iE b
+        F4Spec  a b c d -> F4  <$> getPopIndices jJ a <*> getPopIndices jJ b <*> getPopIndices jJ c <*> getPopIndices jJ d
+        F3Spec  a b c   -> F3  <$> getPopIndices jJ a <*> getPopIndices jJ b <*> getPopIndices jJ c
+        F2Spec  a b     -> F2  <$> getPopIndices jJ a <*> getPopIndices jJ b
+        PWMspec a b     -> PWM <$> getPopIndices jJ a <*> getPopIndices jJ b
     return $ Fold (step fStat) initialize extract
   where
     step :: FStat -> (Maybe GenomPos, Maybe GenomPos, Int, Double) ->
@@ -182,12 +189,13 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
         forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
         hPutStrLn stderr $ "Computing stats " ++ show statSpecs
         blockData <- runSafeT $ do
-            (eigenstratIndEntries, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+            (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+            let jointJanno = concatMap posPacJanno relevantPackages
             let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter
                 eigenstratProdInChunks = case jackknifeMode of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            statsFold <- case statSpecsFold eigenstratIndEntries statSpecs of
+            statsFold <- case statSpecsFold jointJanno statSpecs of
                 Left e  ->  throwM e
                 Right f -> return f
             let summaryStatsProd = purely folds statsFold eigenstratProdInChunks
@@ -229,16 +237,4 @@ collectStatSpecGroups statSpecs = nub . concat $ do
         F3Spec  a b c   -> return [a, b, c]
         F2Spec  a b     -> return [a, b]
         PWMspec a b     -> return [a, b]
-
-findRelevantPackages :: [PopSpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
-findRelevantPackages popSpecs packages = do
-    let indNamesStats   = [ind   | PopSpecInd   ind   <- popSpecs]
-        groupNamesStats = [group | PopSpecGroup group <- popSpecs]
-    fmap catMaybes . forM packages $ \pac -> do
-        inds <- getIndividuals pac
-        let indNamesPac   = [ind   | EigenstratIndEntry ind _ _     <- inds]
-            groupNamesPac = [group | EigenstratIndEntry _   _ group <- inds]
-        if   not (null (indNamesPac `intersect` indNamesStats)) || not (null (groupNamesPac `intersect` groupNamesStats))
-        then return (Just pac)
-        else return Nothing
 

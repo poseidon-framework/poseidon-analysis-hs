@@ -1,12 +1,19 @@
 module Utils (JackknifeMode(..), PopSpec(..), GenomPos, popSpecsNparser, computeAlleleFreq,
-computeJackknife, getPopIndices, popSpecParser, P.runParser) where
+computeJackknife, getPopIndices, popSpecParser, P.runParser, findRelevantPackages) where
 
-import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine, EigenstratIndEntry(..))
+import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
+                                             GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 
 import           Control.Applicative        ((<|>))
+import           Control.Monad              (forM)
 import           Data.Char                  (isSpace)
+import           Data.List                  (intersect)
+import           Data.Maybe                 (catMaybes)
 import           Data.Vector                ((!))
+import           Poseidon.Janno             (JannoRow (..), JannoList(..))
+import           Poseidon.Package           (PoseidonPackage (..),
+                                             getIndividuals)
 import           Poseidon.Utils             (PoseidonException (..))
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
@@ -79,16 +86,28 @@ computeJackknife weights values =
         sigmaSquare = sum [mj * (val - theta) ^ (2 :: Int) / (sumWeights - mj) | (mj, val) <- zip weights' values] / g
     in  (theta, sqrt sigmaSquare)
 
-getPopIndices :: [EigenstratIndEntry] -> PopSpec -> Either PoseidonException [Int]
-getPopIndices indEntries popSpec =
+getPopIndices :: [JannoRow] -> PopSpec -> Either PoseidonException [Int]
+getPopIndices jointJanno popSpec =
     let ret = do
-            (i, EigenstratIndEntry indName _ popName) <- zip [0..] indEntries
+            (i, jannoRow) <- zip [0..] jointJanno
             True <- case popSpec of
-                PopSpecGroup name -> return (name == popName)
-                PopSpecInd   name -> return (name == indName)
+                PopSpecGroup name -> return (name `elem` (getJannoList . jGroupName $ jannoRow))
+                PopSpecInd   name -> return (name == jPoseidonID jannoRow)
             return i
     in  if null ret
         then case popSpec of
             PopSpecGroup n -> Left $ PoseidonIndSearchException ("Group name " ++ n ++ " not found")
             PopSpecInd   n -> Left $ PoseidonIndSearchException ("Individual name " ++ n ++ " not found")
         else Right ret
+
+findRelevantPackages :: [PopSpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
+findRelevantPackages popSpecs packages = do
+    let indNamesStats   = [ind   | PopSpecInd   ind   <- popSpecs]
+        groupNamesStats = [group | PopSpecGroup group <- popSpecs]
+    fmap catMaybes . forM packages $ \pac -> do
+        let janno = posPacJanno pac
+        let indNamesPac   = map jPoseidonID janno
+            groupNamesPac = concatMap (getJannoList . jGroupName) janno
+        if   not (null (indNamesPac `intersect` indNamesStats)) || not (null (groupNamesPac `intersect` groupNamesStats))
+        then return (Just pac)
+        else return Nothing
