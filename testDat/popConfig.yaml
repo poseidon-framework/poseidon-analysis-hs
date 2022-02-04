@@ -1,3 +1,6 @@
+groupDefs:
+  group1: a,b,!c,!<d>
+  group2: e,f,!<g>
 popLefts:
 - <I13721>
 - <I14000>

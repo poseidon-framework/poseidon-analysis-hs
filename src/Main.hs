@@ -137,18 +137,14 @@ rasOptParser = RASOptions <$>
     parseBasePaths <*>
     parseJackknife <*>
     parseExcludeChroms <*>
-    parsePopConfig <*>
+    parsePopConfigFile <*>
     parseMaxCutoff <*>
     parseMaxMissingness <*>
     parseTableOutFile <*>
     parseMaxSnps
 
-parsePopConfig :: OP.Parser PopConfig
-parsePopConfig = parsePopConfigDirect <|> parsePopConfigFile
-  where
-    parsePopConfigDirect = PopConfigDirect <$> OP.some parseLeftPop <*> OP.some parseRightPop <*> parseOutgroup
-    parsePopConfigFile = PopConfigFile <$> OP.option OP.str (OP.long "popConfigFile" <>
-        OP.help "a file containing the population configuration")
+parsePopConfigFile :: OP.Parser FilePath
+parsePopConfigFile = OP.option OP.str (OP.long "popConfigFile" <> OP.help "a file containing the population configuration")
 
 parseLeftPop :: OP.Parser PopSpec
 parseLeftPop = OP.option (OP.eitherReader readPopSpecString) (OP.long "popLeft" <> OP.short 'l' <>

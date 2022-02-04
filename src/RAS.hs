@@ -6,6 +6,7 @@ import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq, computeJackknife, PopSpec(..),
                                               popSpecParser, getPopIndices)
 
+import Control.Applicative ((<|>))
 import           Control.Exception           (Exception, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
@@ -13,9 +14,10 @@ import           Control.Monad               (forM, forM_, when)
 import           Control.Monad.Catch         (throwM)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import           Data.Aeson                  (FromJSON, Object, parseJSON,
-                                              withObject, (.:))
+                                              withObject, (.:), (.:?))
 import           Data.Aeson.Types            (Parser)
 import qualified Data.ByteString             as B
+import Data.HashMap.Strict (toList)
 import           Data.List                   (intersect, intercalate)
 import           Data.Maybe                  (catMaybes)
 import           Data.Text                   (Text)
@@ -45,12 +47,13 @@ import           System.IO                   (hPutStrLn, stderr, withFile, IOMod
 import           Text.Layout.Table          (asciiRoundS, column, def, expand,
                                              rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
+import qualified Text.Parsec.String    as PS
 
 data RASOptions = RASOptions
     { _optBaseDirs       :: [FilePath]
     , _optJackknifeMode  :: JackknifeMode
     , _optExcludeChroms  :: [Chrom]
-    , _optPopConfig      :: PopConfig
+    , _optPopConfig      :: FilePath
     , _optMaxCutoff      :: Int
     , _optMaxMissingness :: Double
     , _optTableOutFile   :: FilePath
@@ -58,28 +61,34 @@ data RASOptions = RASOptions
     }
     deriving (Show)
 
-data PopConfig = PopConfigDirect [PopSpec] [PopSpec] PopSpec
-    | PopConfigFile FilePath
-    deriving (Show)
+type GroupDef = (String, [GroupDefComponent])
 
-data PopConfigYamlStruct = PopConfigYamlStruct
-    { popConfigLefts    :: [PopSpec]
+data GroupDefComponent = GroupComponentAdd PopSpec | GroupComponentSubtract PopSpec deriving (Show)
+
+data PopConfig = PopConfigYamlStruct
+    { popConfigGroupDef :: [GroupDef]
+    , popConfigLefts    :: [PopSpec]
     , popConfigRights   :: [PopSpec]
     , popConfigOutgroup :: PopSpec
     }
 
-instance FromJSON PopConfigYamlStruct where
+instance FromJSON PopConfig where
     parseJSON = withObject "PopConfigYamlStruct" $ \v -> PopConfigYamlStruct
-        <$> parsePopSpecsFromJSON v "popLefts"
+        <$> parseGroupDefsFromJSON v
+        <*> parsePopSpecsFromJSON v "popLefts"
         <*> parsePopSpecsFromJSON v "popRights"
         <*> parsePopSpecFromJSON v "outgroup"
       where
-        parsePopSpecFromJSON :: Object -> Text -> Parser PopSpec
-        parsePopSpecFromJSON v label = do
-            popDefString <- v .: label
-            case P.runParser popSpecParser () "" popDefString of
-                Left err -> fail (show err)
-                Right p  -> return p
+        parseGroupDefsFromJSON :: Object -> Parser [(String, [GroupDefComponent])]
+        parseGroupDefsFromJSON v = do
+            maybeObj <- v .:? "groupDefs"
+            case maybeObj of
+                Nothing -> return []
+                Just obj -> return $ do
+                    (key, value) <- toList obj
+                    case parseGroupDef value of
+                        Left err -> fail (show err)
+                        Right p -> return (key, p)
         parsePopSpecsFromJSON :: Object -> Text -> Parser [PopSpec]
         parsePopSpecsFromJSON v label = do
             popDefStrings <- v .: label
@@ -87,6 +96,24 @@ instance FromJSON PopConfigYamlStruct where
                 case P.runParser popSpecParser () "" popDefString of
                     Left err -> fail (show err)
                     Right p  -> return p
+        parsePopSpecFromJSON :: Object -> Text -> Parser PopSpec
+        parsePopSpecFromJSON v label = do
+            popDefString <- v .: label
+            case P.runParser popSpecParser () "" popDefString of
+                Left err -> fail (show err)
+                Right p  -> return p
+
+parseGroupDef :: String -> Either String [GroupDefComponent]
+parseGroupDef s = case P.runParser groupDefParser () "" s of
+    Left p  -> Left (show p)
+    Right x -> Right x
+
+groupDefParser :: PS.Parser [GroupDefComponent]
+groupDefParser = (componentParserSubtract <|> componentParserAdd) `P.sepBy` P.char ','
+  where
+    componentParserSubtract = P.char '!' *> (GroupComponentSubtract <$> popSpecParser)
+    componentParserAdd = GroupComponentAdd <$> popSpecParser
+
 
 data RascalException = PopConfigYamlException FilePath String
     deriving (Show)
@@ -107,9 +134,8 @@ runRAS rasOpts = do
     allPackages <- readPoseidonPackageCollection pacReadOpts (_optBaseDirs rasOpts)
 
     hPutStrLn stderr ("Loaded " ++ show (length allPackages) ++ " packages")
-    (popLefts, popRights, outgroup) <- case _optPopConfig rasOpts of
-        PopConfigDirect pl pr og -> return (pl, pr, og)
-        PopConfigFile f          -> readPopConfig f
+    (groupDefs, popLefts, popRights, outgroup) <- readPopConfig (_optPopConfig rasOpts)
+    hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
     hPutStrLn stderr $ "Found left populations: " ++ show popLefts
     hPutStrLn stderr $ "Found right populations: " ++ show popRights
     hPutStrLn stderr $ "Found outgroup: " ++ show outgroup
@@ -172,13 +198,13 @@ runRAS rasOpts = do
     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block
 
-readPopConfig :: FilePath -> IO ([PopSpec], [PopSpec], PopSpec)
+readPopConfig :: FilePath -> IO ([GroupDef], [PopSpec], [PopSpec], PopSpec)
 readPopConfig fn = do
     bs <- B.readFile fn
-    PopConfigYamlStruct pl pr og <- case decodeEither' bs of
+    PopConfigYamlStruct gd pl pr og <- case decodeEither' bs of
         Left err -> throwIO $ PopConfigYamlException fn (show err)
         Right x  -> return x
-    return (pl, pr, og)
+    return (gd, pl, pr, og)
 
 findRelevantPackages :: [PopSpec] -> [PoseidonPackage] -> IO [PoseidonPackage]
 findRelevantPackages popSpecs packages = do
