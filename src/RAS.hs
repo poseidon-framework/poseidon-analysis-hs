@@ -174,28 +174,20 @@ runRAS rasOpts = do
     let maxK = _optMaxCutoff rasOpts
         nLefts = length popLefts
         nRights = length popRights
-    let jackknifeEstimates = do
-            k <- [0 .. (maxK - 2)]
-            return $ do
-                i <- [0 .. nLefts]
-                return $ do
-                    j <- [0 .. nRights]
-                    let counts    = [blockSiteCount bd !! i | bd <- blockData]
-                    let vals      = [((blockVals bd !! k) !! i) !! j | bd <- blockData]
-                        cumulVals = do
-                            bd <- blockData
-                            return $ sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]]
-                    return (computeJackknife counts vals, computeJackknife counts cumulVals)
-    let tableH = ["Left", "Right", "k", "Cumulative", "RAS", "StdErr"]
+    let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
         tableB = do
             cumul <- [False, True]
             (i, popLeft) <- zip [0..] popLefts
             (j, popRight) <- zip [0..] popRights
             k <- [0 .. (maxK - 2)]
-            let jne = ((jackknifeEstimates !! k) !! i) !! j
-            let (val, err) = if cumul then snd jne else fst jne
-            return [show popLeft, show popRight, show (k + 2), show cumul, show val, show err]
-    let colSpecs = replicate 6 (column expand def def def)
+            let counts = [blockSiteCount bd !! i | bd <- blockData]
+                vals = if cumul then
+                           [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
+                       else
+                           [((blockVals bd !! k) !! i) !! j | bd <- blockData]
+            let (val, err) = computeJackknife counts vals
+            return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
+    let colSpecs = replicate 7 (column expand def def def)
     putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
     withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
         hPutStrLn h $ intercalate "\t" tableH
@@ -282,7 +274,7 @@ buildRasFold jointJanno maxK maxM outgroup popLefts popRights = do
                         -- main loop
                         let nL = length popLefts
                             nR = length popRights
-                            kIndexOffset = (directedTotalCount - 2) * nL * nR
+                            k = directedTotalCount - 2
                             leftFreqs = map (computeAlleleFreq genoLine) leftI
                             rightFreqs = do
                                 r <- rightI
@@ -293,7 +285,7 @@ buildRasFold jointJanno maxK maxM outgroup popLefts popRights = do
                             relevantRightFreqs = [(i, x) | (i,      x) <- zip [0..] rightFreqs, x > 0.0]
                         forM_ relevantLeftFreqs $ \(i, x) ->
                             forM_ relevantRightFreqs $ \(j, y) -> do
-                                let index = kIndexOffset + i * j
+                                let index = k * nL * nR + i * nR + j
                                 liftIO $ VUM.modify vals (+(x * y)) index
         return (newStartPos, newEndPos, counts, vals)
     initialise :: (MonadIO m) => Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
@@ -312,10 +304,10 @@ buildRasFold jointJanno maxK maxM outgroup popLefts popRights = do
             let normalisedVals = do
                     k <- [0 .. (maxK - 2)]
                     return $ do
-                        i <- [0 .. nLefts]
+                        i <- [0 .. (nLefts - 1)]
                         return $ do
-                            j <- [0 .. nRights]
-                            let jointIndex = k * nLefts * nRights + i * j
+                            j <- [0 .. (nRights - 1)]
+                            let jointIndex = k * nLefts * nRights + i * nRights + j
                             let val = valsF VU.! jointIndex
                             return $ val / fromIntegral (countsF VU.! i)
             return $ BlockData startPos endPos (VU.toList countsF) normalisedVals
