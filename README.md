@@ -2,6 +2,8 @@ Welcome to the poseidon-analysis-hs package.
 
 This is under development currently. 
 
+The binary `xerxes` is available for Mac OS X and Linux as precompiled binaries on [github](https://github.com/poseidon-framework/poseidon-analysis-hs/releases/latest)
+
 To install the development version of poseidon-analysis-hs/xerxes you can follow these steps:
 
 1. Install the Haskell build tool [Stack](https://docs.haskellstack.org/en/stable/README/)
