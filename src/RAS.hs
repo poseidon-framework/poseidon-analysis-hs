@@ -3,16 +3,13 @@
 module RAS where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
-                                              PopSpec (..), computeAlleleFreq,
-                                              computeJackknife,
-                                              findRelevantPackages,
-                                              getPopIndices, popSpecParser)
+                                              computeAlleleFreq,
+                                              computeJackknife)
 
-import           Control.Applicative         ((<|>))
 import           Control.Exception           (Exception, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
-import           Control.Monad               (forM, forM_, when, unless)
+import           Control.Monad               (forM, forM_, unless, when)
 import           Control.Monad.Catch         (throwM)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import           Data.Aeson                  (FromJSON, Object, parseJSON,
@@ -20,8 +17,7 @@ import           Data.Aeson                  (FromJSON, Object, parseJSON,
 import           Data.Aeson.Types            (Parser)
 import qualified Data.ByteString             as B
 import           Data.HashMap.Strict         (toList)
-import           Data.List                   (intercalate, intersect)
-import           Data.Maybe                  (catMaybes)
+import           Data.List                   (intercalate)
 import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
@@ -34,16 +30,21 @@ import           Pipes                       (cat, (>->))
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
-import           Poseidon.Janno              (JannoRow (..), JannoList(..))
+import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity,
+                                              SignedEntitiesList,
+                                              findNonExistentEntities,
+                                              entitiesListP, entitySpecParser, underlyingEntity,
+                                              filterRelevantPackages, indInfoConformsToEntitySpec,
+                                              conformingEntityIndices)
 import           Poseidon.Package            (PackageReadOptions (..),
                                               PoseidonPackage (..),
                                               defaultPackageReadOptions,
-                                              getIndividuals,
                                               getJointGenotypeData,
+                                              getJointIndividualInfo,
                                               readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes     (IndividualInfo (..))
 import           Poseidon.Utils              (PoseidonException (..))
-import           SequenceFormats.Eigenstrat  (EigenstratIndEntry (..),
-                                              EigenstratSnpEntry (..),
+import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom (..))
 import           System.IO                   (IOMode (..), hPutStrLn, stderr,
@@ -51,7 +52,6 @@ import           System.IO                   (IOMode (..), hPutStrLn, stderr,
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
-import qualified Text.Parsec.String          as PS
 
 data RASOptions = RASOptions
     { _optBaseDirs       :: [FilePath]
@@ -65,17 +65,13 @@ data RASOptions = RASOptions
     }
     deriving (Show)
 
-type GroupDef = (String, [GroupDefComponent])
-
-data GroupDefComponent = GroupComponentAdd PopSpec
-    | GroupComponentSubtract PopSpec
-    deriving (Show)
+type GroupDef = (String, SignedEntitiesList)
 
 data PopConfig = PopConfigYamlStruct
     { popConfigGroupDef :: [GroupDef]
-    , popConfigLefts    :: [PopSpec]
-    , popConfigRights   :: [PopSpec]
-    , popConfigOutgroup :: PopSpec
+    , popConfigLefts    :: EntitiesList
+    , popConfigRights   :: EntitiesList
+    , popConfigOutgroup :: Maybe PoseidonEntity
     }
 
 instance FromJSON PopConfig where
@@ -83,43 +79,33 @@ instance FromJSON PopConfig where
         <$> parseGroupDefsFromJSON v
         <*> parsePopSpecsFromJSON v "popLefts"
         <*> parsePopSpecsFromJSON v "popRights"
-        <*> parsePopSpecFromJSON v "outgroup"
+        <*> parseMaybePopSpecFromJSON v "outgroup"
       where
-        parseGroupDefsFromJSON :: Object -> Parser [(String, [GroupDefComponent])]
+        parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
         parseGroupDefsFromJSON v = do
             maybeObj <- v .:? "groupDefs"
             case maybeObj of
                 Nothing -> return []
                 Just obj -> return $ do
                     (key, value) <- toList obj
-                    case parseGroupDef value of
+                    case P.runParser entitiesListP () "" value of
                         Left err -> fail (show err)
                         Right p  -> return (key, p)
-        parsePopSpecsFromJSON :: Object -> Text -> Parser [PopSpec]
+        parsePopSpecsFromJSON :: Object -> Text -> Parser [PoseidonEntity]
         parsePopSpecsFromJSON v label = do
             popDefStrings <- v .: label
             forM popDefStrings $ \popDefString -> do
-                case P.runParser popSpecParser () "" popDefString of
+                case P.runParser entitySpecParser () "" popDefString of
                     Left err -> fail (show err)
                     Right p  -> return p
-        parsePopSpecFromJSON :: Object -> Text -> Parser PopSpec
-        parsePopSpecFromJSON v label = do
-            popDefString <- v .: label
-            case P.runParser popSpecParser () "" popDefString of
-                Left err -> fail (show err)
-                Right p  -> return p
-
-parseGroupDef :: String -> Either String [GroupDefComponent]
-parseGroupDef s = case P.runParser groupDefParser () "" s of
-    Left p  -> Left (show p)
-    Right x -> Right x
-
-groupDefParser :: PS.Parser [GroupDefComponent]
-groupDefParser = (componentParserSubtract <|> componentParserAdd) `P.sepBy` P.char ','
-  where
-    componentParserSubtract = P.char '!' *> (GroupComponentSubtract <$> popSpecParser)
-    componentParserAdd = GroupComponentAdd <$> popSpecParser
-
+        parseMaybePopSpecFromJSON :: Object -> Text -> Parser (Maybe PoseidonEntity)
+        parseMaybePopSpecFromJSON v label = do
+            maybePopDefString <- v .:? label
+            case maybePopDefString of
+                Nothing -> return Nothing
+                Just p -> case P.runParser entitySpecParser () "" p of
+                    Left err -> fail (show err)
+                    Right p'  -> return (Just p')
 
 data RascalException = PopConfigYamlException FilePath String
     | GroupDefException String
@@ -139,60 +125,62 @@ runRAS :: RASOptions -> IO ()
 runRAS rasOpts = do
     let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
 
-    (groupDefs, popLefts, popRights, outgroup) <- readPopConfig (_optPopConfig rasOpts)
-    hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
+    PopConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_optPopConfig rasOpts)
+    unless (null groupDefs) $ hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
     hPutStrLn stderr $ "Found left populations: " ++ show popLefts
     hPutStrLn stderr $ "Found right populations: " ++ show popRights
-    hPutStrLn stderr $ "Found outgroup: " ++ show outgroup
+    case maybeOutgroup of
+        Nothing -> return ()
+        Just o  -> hPutStrLn stderr $ "Found outgroup: " ++ show o
 
-    allPackages <- do
-        pc <- readPoseidonPackageCollection pacReadOpts (_optBaseDirs rasOpts)
-        case addGroupDefsToJanno groupDefs pc of
-          Left re  -> throwM re
-          Right pp -> return pp
+    allPackages <- readPoseidonPackageCollection pacReadOpts (_optBaseDirs rasOpts)
     hPutStrLn stderr ("Loaded " ++ show (length allPackages) ++ " packages")
 
+    let outgroupSpec = case maybeOutgroup of
+            Nothing -> []
+            Just o  -> [o]
+    let collectedPopSpecs = concatMap (map underlyingEntity . snd) groupDefs ++ popLefts ++ popRights ++ outgroupSpec
+    let missingEntities = findNonExistentEntities collectedPopSpecs (getJointIndividualInfo allPackages)
+    if not. null $ missingEntities then
+        hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+    else do
+        let relevantPackages = filterRelevantPackages collectedPopSpecs allPackages
+        hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+        mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
+        let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
-    let collectedPopSpecs = popLefts ++ popRights ++ [outgroup]
-    relevantPackages <- findRelevantPackages collectedPopSpecs allPackages
-    hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-    forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
-
-    blockData <- runSafeT $ do
-        (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-        let jointJanno = concatMap posPacJanno relevantPackages
-        let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
-                >-> capNrSnps (_optMaxSnps rasOpts)
-            eigenstratProdInChunks = case _optJackknifeMode rasOpts of
-                JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-        rasFold <- case buildRasFold jointJanno (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) outgroup popLefts popRights of
-            Left e  ->  throwM e
-            Right f -> return f
-        let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
-        purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-    let maxK = _optMaxCutoff rasOpts
-        nLefts = length popLefts
-        nRights = length popRights
-    let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
-        tableB = do
-            cumul <- [False, True]
-            (i, popLeft) <- zip [0..] popLefts
-            (j, popRight) <- zip [0..] popRights
-            k <- [0 .. (maxK - 2)]
-            let counts = [blockSiteCount bd !! i | bd <- blockData]
-                vals = if cumul then
-                           [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
-                       else
-                           [((blockVals bd !! k) !! i) !! j | bd <- blockData]
-            let (val, err) = computeJackknife counts vals
-            return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
-    let colSpecs = replicate 7 (column expand def def def)
-    putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
-    withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
-        hPutStrLn h $ intercalate "\t" tableH
-        forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
-    return ()
+        blockData <- runSafeT $ do
+            (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+            let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
+                    >-> capNrSnps (_optMaxSnps rasOpts)
+                eigenstratProdInChunks = case _optJackknifeMode rasOpts of
+                    JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                    JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+            rasFold <- case buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights of
+                Left e  ->  throwM e
+                Right f -> return f
+            let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
+            purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+        let maxK = _optMaxCutoff rasOpts
+        let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
+        let tableB = do
+                cumul <- [False, True]
+                (i, popLeft) <- zip [0..] popLefts
+                (j, popRight) <- zip [0..] popRights
+                k <- [0 .. (maxK - 2)]
+                let counts = [blockSiteCount bd !! i | bd <- blockData]
+                    vals = if cumul then
+                            [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
+                        else
+                            [((blockVals bd !! k) !! i) !! j | bd <- blockData]
+                let (val, err) = computeJackknife counts vals
+                return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
+        let colSpecs = replicate 7 (column expand def def def)
+        putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+        withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
+            hPutStrLn h $ intercalate "\t" tableH
+            forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
+        return ()
   where
     chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
     capNrSnps Nothing  = cat
@@ -204,46 +192,29 @@ runRAS rasOpts = do
     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block
 
-readPopConfig :: FilePath -> IO ([GroupDef], [PopSpec], [PopSpec], PopSpec)
+readPopConfig :: FilePath -> IO PopConfig
 readPopConfig fn = do
     bs <- B.readFile fn
-    PopConfigYamlStruct gd pl pr og <- case decodeEither' bs of
+    case decodeEither' bs of
         Left err -> throwIO $ PopConfigYamlException fn (show err)
         Right x  -> return x
-    return (gd, pl, pr, og)
 
-addGroupDefsToJanno :: [GroupDef] -> [PoseidonPackage] -> Either RascalException [PoseidonPackage]
-addGroupDefsToJanno groupDefs packages = do
-    let newGroupNames = map fst groupDefs
-    forM packages $ \pac -> do
-        newJanno <- forM (posPacJanno pac) $ \row -> do
-            let groups = getJannoList . jGroupName $ row
-                indName = jPoseidonID row
-            unless (null $ groups `intersect` newGroupNames) $
-                Left $ GroupDefException ("new group names " ++ show newGroupNames ++ " must not be present in the Jannofiles")
-            addedGroups <- fmap catMaybes . forM groupDefs $ \(newGroupName, groupComponents) ->
-                if conformsToComponents groupComponents indName groups then return (Just newGroupName) else return Nothing
-            return $ row {jGroupName = JannoList (groups ++ addedGroups)}
-        return $ pac {posPacJanno = newJanno}
-  where
-    conformsToComponents :: [GroupDefComponent] -> String -> [String] -> Bool
-    conformsToComponents groupComponents indName groupNames = go groupComponents False
-      where
-        go [] r = r
-        go (GroupComponentAdd      (PopSpecGroup n):rest) r =
-            if n `elem` groupNames then go rest True else go rest r
-        go (GroupComponentAdd      (PopSpecInd   n):rest) r =
-            if n == indName then go rest True else go rest r
-        go (GroupComponentSubtract (PopSpecGroup n):rest) r =
-            if n `elem` groupNames then go rest False else go rest r
-        go (GroupComponentSubtract (PopSpecInd   n):rest) r =
-            if n == indName then go rest False else go rest r
+addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
+addGroupDefs groupDefs indInfoRows = do
+    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
+    let additionalGroupNames = do
+            (groupName, signedEntityList) <- groupDefs
+            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
+            return groupName
+    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
-buildRasFold :: (MonadIO m) => [JannoRow] -> Int -> Double -> PopSpec -> [PopSpec] -> [PopSpec] -> Either PoseidonException (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
-buildRasFold jointJanno maxK maxM outgroup popLefts popRights = do
-    outgroupI <- getPopIndices jointJanno outgroup
-    leftI <- mapM (getPopIndices jointJanno) popLefts
-    rightI <- mapM (getPopIndices jointJanno) popRights
+buildRasFold :: (MonadIO m) => [IndividualInfo] -> Int -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> Either PoseidonException (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights = do
+    let outgroupI = case maybeOutgroup of
+            Nothing -> []
+            Just o  -> conformingEntityIndices [o] indInfo
+    let leftI = [conformingEntityIndices [l] indInfo | l <- popLefts]
+        rightI = [conformingEntityIndices [r] indInfo | r <- popRights]
     let nL = length popLefts
         nR = length popRights
     return $ FoldM (step outgroupI leftI rightI) (initialise nL nR) extract

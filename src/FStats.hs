@@ -1,7 +1,6 @@
 module FStats (
       FStatSpec(..)
     , P.ParseError
-    , PopSpec(..)
     , FstatsOptions(..)
     , JackknifeMode(..)
     , fStatSpecParser
@@ -10,34 +9,34 @@ module FStats (
 ) where
 
 import           Utils                      (GenomPos, JackknifeMode (..),
-                                             PopSpec (..), computeAlleleFreq,
-                                             computeJackknife,
-                                             findRelevantPackages,
-                                             getPopIndices, popSpecsNparser)
+                                             computeAlleleFreq,
+                                             computeJackknife, popSpecsNparser)
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (throwIO)
 import           Control.Foldl              (Fold (..), list, purely)
-import           Control.Monad              (forM, forM_)
+import           Control.Monad              (forM_)
 import           Control.Monad.Catch        (throwM)
-import           Data.List                  (intercalate, intersect, nub,
+import           Data.List                  (intercalate, nub,
                                              transpose)
-import           Data.Maybe                 (catMaybes)
 import           Lens.Family2               (view)
 import           Pipes                      ((>->))
 import           Pipes.Group                (chunksOf, folds, groupsBy)
 import qualified Pipes.Prelude              as P
 import           Pipes.Safe                 (runSafeT)
-import           Poseidon.Janno             (JannoRow (..))
+import           Poseidon.EntitiesList      (PoseidonEntity (..),
+                                             filterRelevantPackages,
+                                             conformingEntityIndices,
+                                             findNonExistentEntities)
 import           Poseidon.Package           (PackageReadOptions (..),
                                              PoseidonPackage (..),
                                              defaultPackageReadOptions,
-                                             getIndividuals,
                                              getJointGenotypeData,
+                                             getJointIndividualInfo,
                                              readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes    (IndividualInfo (..))
 import           Poseidon.Utils             (PoseidonException (..))
-import           SequenceFormats.Eigenstrat (EigenstratIndEntry (..),
-                                             EigenstratSnpEntry (..), GenoLine)
+import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 import           System.IO                  (hPutStrLn, stderr)
 import           Text.Layout.Table          (asciiRoundS, column, def, expand,
@@ -61,10 +60,10 @@ data FstatsOptions = FstatsOptions
     }
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
-data FStatSpec = F4Spec PopSpec PopSpec PopSpec PopSpec
-    | F3Spec PopSpec PopSpec PopSpec
-    | F2Spec PopSpec PopSpec
-    | PWMspec PopSpec PopSpec
+data FStatSpec = F4Spec PoseidonEntity PoseidonEntity PoseidonEntity PoseidonEntity
+    | F3Spec PoseidonEntity PoseidonEntity PoseidonEntity
+    | F2Spec PoseidonEntity PoseidonEntity
+    | PWMspec PoseidonEntity PoseidonEntity
     deriving (Eq)
 
 instance Show FStatSpec where
@@ -118,18 +117,20 @@ pwmSpecParser = do
     [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
     return $ PWMspec a b
 
-statSpecsFold :: [JannoRow] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
-statSpecsFold jointJanno fStatSpecs = do
-    listOfFolds <- mapM (statSpecFold jointJanno) fStatSpecs
+statSpecsFold :: [IndividualInfo] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
+statSpecsFold indInfo fStatSpecs = do
+    listOfFolds <- mapM (statSpecFold indInfo) fStatSpecs
     return $ sequenceA listOfFolds
 
-statSpecFold :: [JannoRow] -> FStatSpec -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) BlockData)
-statSpecFold jJ fStatSpec = do
-    fStat <- case fStatSpec of
-        F4Spec  a b c d -> F4  <$> getPopIndices jJ a <*> getPopIndices jJ b <*> getPopIndices jJ c <*> getPopIndices jJ d
-        F3Spec  a b c   -> F3  <$> getPopIndices jJ a <*> getPopIndices jJ b <*> getPopIndices jJ c
-        F2Spec  a b     -> F2  <$> getPopIndices jJ a <*> getPopIndices jJ b
-        PWMspec a b     -> PWM <$> getPopIndices jJ a <*> getPopIndices jJ b
+statSpecFold :: [IndividualInfo] -> FStatSpec -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) BlockData)
+statSpecFold indInfo fStatSpec = do
+    let getI = conformingEntityIndices
+        i = indInfo
+    let fStat = case fStatSpec of
+            F4Spec  a b c d -> F4  (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
+            F3Spec  a b c   -> F3  (getI [a] i) (getI [b] i) (getI [c] i)
+            F2Spec  a b     -> F2  (getI [a] i) (getI [b] i)
+            PWMspec a b     -> PWM (getI [a] i) (getI [b] i)
     return $ Fold (step fStat) initialize extract
   where
     step :: FStat -> (Maybe GenomPos, Maybe GenomPos, Int, Double) ->
@@ -184,33 +185,37 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
         hPutStrLn stderr "No statistics to be computed"
     else do
         let collectedStats = collectStatSpecGroups statSpecs
-        relevantPackages <- findRelevantPackages collectedStats allPackages
-        hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-        forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
-        hPutStrLn stderr $ "Computing stats " ++ show statSpecs
-        blockData <- runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-            let jointJanno = concatMap posPacJanno relevantPackages
-            let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter
-                eigenstratProdInChunks = case jackknifeMode of
-                    JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                    JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            statsFold <- case statSpecsFold jointJanno statSpecs of
-                Left e  ->  throwM e
-                Right f -> return f
-            let summaryStatsProd = purely folds statsFold eigenstratProdInChunks
-            purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-        let jackknifeEstimates = [computeJackknife (map blockSiteCount blocks) (map blockVal blocks) | blocks <- transpose blockData]
-            colSpecs = replicate 4 (column expand def def def)
-            tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
-            tableB = do
-                (fstat, result) <- zip statSpecs jackknifeEstimates
-                return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
-        if   rawOutput
-        then do
-            putStrLn $ intercalate "\t" tableH
-            forM_ tableB $ \row -> putStrLn (intercalate "\t" row)
-        else putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+        let missingEntities = findNonExistentEntities collectedStats (getJointIndividualInfo allPackages)
+        if not. null $ missingEntities then
+            hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+        else do
+            let relevantPackages = filterRelevantPackages collectedStats allPackages
+            hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+            forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
+            hPutStrLn stderr $ "Computing stats " ++ show statSpecs
+            blockData <- runSafeT $ do
+                (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+                let jointIndInfo = getJointIndividualInfo relevantPackages
+                let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter
+                    eigenstratProdInChunks = case jackknifeMode of
+                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+                statsFold <- case statSpecsFold jointIndInfo statSpecs of
+                    Left e  ->  throwM e
+                    Right f -> return f
+                let summaryStatsProd = purely folds statsFold eigenstratProdInChunks
+                purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+            let jackknifeEstimates = [computeJackknife (map blockSiteCount blocks) (map blockVal blocks) | blocks <- transpose blockData]
+                colSpecs = replicate 4 (column expand def def def)
+                tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
+                tableB = do
+                    (fstat, result) <- zip statSpecs jackknifeEstimates
+                    return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
+            if   rawOutput
+            then do
+                putStrLn $ intercalate "\t" tableH
+                forM_ tableB $ \row -> putStrLn (intercalate "\t" row)
+            else putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
     chunkEigenstratByChromosome = view (groupsBy sameChrom)
@@ -229,7 +234,7 @@ readStatSpecsFromFile statSpecsFile = do
         Left err -> throwIO (PoseidonFStatsFormatException (show err))
         Right r  -> return r
 
-collectStatSpecGroups :: [FStatSpec] -> [PopSpec]
+collectStatSpecGroups :: [FStatSpec] -> [PoseidonEntity]
 collectStatSpecGroups statSpecs = nub . concat $ do
     stat <- statSpecs
     case stat of

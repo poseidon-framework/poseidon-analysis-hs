@@ -2,9 +2,9 @@
 
 import           FStats                     (FStatSpec (..), FstatsOptions (..),
                                              fStatSpecParser, runFstats)
-import           RAS                        (PopConfig (..), RASOptions (..),
+import           RAS                        (RASOptions (..),
                                              runRAS)
-import           Utils                      (JackknifeMode (..), PopSpec (..), runParser, popSpecParser)
+import           Utils                      (JackknifeMode (..), runParser)
 
 import           Paths_poseidon_analysis_hs (version)
 import           Poseidon.PoseidonVersion   (showPoseidonVersion,
@@ -12,7 +12,6 @@ import           Poseidon.PoseidonVersion   (showPoseidonVersion,
 import           Poseidon.Utils             (PoseidonException (..),
                                              renderPoseidonException)
 
-import           Control.Applicative        ((<|>))
 import           Control.Exception          (catch)
 import           Data.ByteString.Char8      (pack, splitWith)
 import           Data.List                  (intercalate)
@@ -145,33 +144,6 @@ rasOptParser = RASOptions <$>
 
 parsePopConfigFile :: OP.Parser FilePath
 parsePopConfigFile = OP.option OP.str (OP.long "popConfigFile" <> OP.help "a file containing the population configuration")
-
-parseLeftPop :: OP.Parser PopSpec
-parseLeftPop = OP.option (OP.eitherReader readPopSpecString) (OP.long "popLeft" <> OP.short 'l' <>
-    OP.help "Define a left population. can be given multiple times. A single population can be defined in their simplest form my just entering a group label, such as \"French\". \
-    \A single individual can be entered within angular brackets, such as \"<I123>\". More complex group definitions can \
-    \involve multiple groups or individuals that are added or subtracted, using a comma-separated list of entities \
-    \(groups or individuals), and using the \"!\" symbol to mark an entity to exclude from the definition. \
-    \Example: \"French,!<I1234>,!<I1235>,Spanish\". Here, French is added as group, then two individuals are removed, \
-    \and then Spanish is added. These operations are always executed in the order they appear in the definition. \
-    \Note it is also possible to define completely new groups by adding up specific \
-    \individuals, such as \"<I123>,<I124>,<I125>\". Note: In bash or zsh, you need to surround group definitions \
-    \using single quotes!")
-
-readPopSpecString :: String -> Either String PopSpec
-readPopSpecString s = case runParser popSpecParser () "" s of
-    Left p  -> Left (show p)
-    Right x -> Right x
-
-parseRightPop :: OP.Parser PopSpec
-parseRightPop = OP.option (OP.eitherReader readPopSpecString) (OP.long "popRight" <> OP.short 'r' <>
-    OP.help "Define a right population. can be given multiple times. The same rules for complex compositions \
-    \apply as with --popLeft, see above.")
-
-parseOutgroup :: OP.Parser PopSpec
-parseOutgroup = OP.option (OP.eitherReader readPopSpecString) (OP.long "outgroup" <> OP.short 'o' <>
-    OP.help "Define an outgroup to polarise allele frequencies with. The same rules for complex compositions \
-    \apply as with --popLeft, see above.")
 
 parseMaxCutoff :: OP.Parser Int
 parseMaxCutoff = OP.option OP.auto (OP.long "maxAlleleCount" <> OP.short 'k' <>
