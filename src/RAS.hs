@@ -17,7 +17,7 @@ import           Data.Aeson                  (FromJSON, Object, parseJSON,
 import           Data.Aeson.Types            (Parser)
 import qualified Data.ByteString             as B
 import           Data.HashMap.Strict         (toList)
-import           Data.List                   (intercalate)
+import           Data.List                   (intercalate, nub, (\\))
 import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
@@ -30,11 +30,11 @@ import           Pipes                       (cat, (>->))
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
-import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity,
+import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity(..),
                                               SignedEntitiesList,
                                               findNonExistentEntities,
                                               entitiesListP, entitySpecParser, underlyingEntity,
-                                              filterRelevantPackages, indInfoConformsToEntitySpec,
+                                              indInfoFindRelevantPackageNames, indInfoConformsToEntitySpec,
                                               conformingEntityIndices)
 import           Poseidon.Package            (PackageReadOptions (..),
                                               PoseidonPackage (..),
@@ -139,14 +139,21 @@ runRAS rasOpts = do
     let outgroupSpec = case maybeOutgroup of
             Nothing -> []
             Just o  -> [o]
-    let collectedPopSpecs = concatMap (map underlyingEntity . snd) groupDefs ++ popLefts ++ popRights ++ outgroupSpec
-    let missingEntities = findNonExistentEntities collectedPopSpecs (getJointIndividualInfo allPackages)
+    let newGroups = map (Group . fst) groupDefs
+    let allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++
+            popLefts ++ popRights ++ outgroupSpec) \\ newGroups
+
+    let jointIndInfoAll = getJointIndividualInfo allPackages
+    let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
     if not. null $ missingEntities then
         hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
     else do
-        let relevantPackages = filterRelevantPackages collectedPopSpecs allPackages
+        let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
+            relevantPackageNames = indInfoFindRelevantPackageNames (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
+        let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
         hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
         mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
+        
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
         blockData <- runSafeT $ do
