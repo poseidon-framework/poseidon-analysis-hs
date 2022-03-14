@@ -161,5 +161,5 @@ parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
 
 parseMaxSnps :: OP.Parser (Maybe Int)
 parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
-    OP.help "define a maximum nr of snps to pass." <>
-    OP.value Nothing <> OP.internal)
+    OP.help "Stop after a maximum nr of snps has been processed. Useful for short test runs" <>
+    OP.value Nothing <> OP.hidden)

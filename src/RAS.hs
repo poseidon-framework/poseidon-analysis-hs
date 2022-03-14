@@ -24,18 +24,21 @@ import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 
 import           Data.Yaml                   (decodeEither')
+import           Debug.Trace                 (trace)
 import           Lens.Family2                (view)
 
 import           Pipes                       (cat, (>->))
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
-import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity(..),
+import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
                                               SignedEntitiesList,
+                                              conformingEntityIndices,
+                                              entitiesListP, entitySpecParser,
                                               findNonExistentEntities,
-                                              entitiesListP, entitySpecParser, underlyingEntity,
-                                              indInfoFindRelevantPackageNames, indInfoConformsToEntitySpec,
-                                              conformingEntityIndices)
+                                              indInfoConformsToEntitySpec,
+                                              indInfoFindRelevantPackageNames,
+                                              underlyingEntity)
 import           Poseidon.Package            (PackageReadOptions (..),
                                               PoseidonPackage (..),
                                               defaultPackageReadOptions,
@@ -48,7 +51,7 @@ import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom (..))
 import           System.IO                   (IOMode (..), hPutStrLn, stderr,
-                                              withFile)
+                                              withFile, hPrint)
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
@@ -105,7 +108,7 @@ instance FromJSON PopConfig where
                 Nothing -> return Nothing
                 Just p -> case P.runParser entitySpecParser () "" p of
                     Left err -> fail (show err)
-                    Right p'  -> return (Just p')
+                    Right p' -> return (Just p')
 
 data RascalException = PopConfigYamlException FilePath String
     | GroupDefException String
@@ -153,7 +156,7 @@ runRAS rasOpts = do
         let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
         hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
         mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
-        
+
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
         blockData <- runSafeT $ do
@@ -236,7 +239,7 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
             totalNonMissing = sum . map snd $ alleleCountPairs
             totalHaps = 2 * sum (map length rightI)
             missingness = fromIntegral (totalHaps - totalNonMissing) / fromIntegral totalHaps
-        -- liftIO $ hPutStrLn stderr (show (totalDerived, totalNonMissing, totalHaps, missingness))
+        -- liftIO $ hPrint stderr (totalDerived, totalNonMissing, totalHaps, missingness)
         when (missingness <= maxM) $ do
             let outgroupFreq = if null outgroupI then Just 0.0 else computeAlleleFreq genoLine outgroupI
             case outgroupFreq of
@@ -246,7 +249,9 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
                     forM_ (zip [0..] leftI) $ \(i1, i2s) ->
                         when (any (/= Missing) [genoLine V.! j | j <- i2s]) . liftIO $ VUM.modify counts (+1) i1
                     let directedTotalCount = if oFreq < 0.5 then totalDerived else totalHaps - totalDerived
+                    -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                     when (directedTotalCount >= 2 && directedTotalCount <= maxK) $ do
+                        liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                         -- main loop
                         let nL = length popLefts
                             nR = length popRights
