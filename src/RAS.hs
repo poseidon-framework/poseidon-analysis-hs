@@ -163,9 +163,7 @@ runRAS rasOpts = do
                 eigenstratProdInChunks = case _optJackknifeMode rasOpts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            rasFold <- case buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights of
-                Left e  ->  throwM e
-                Right f -> return f
+            let rasFold = buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights
             let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
         let maxK = _optMaxCutoff rasOpts
@@ -215,16 +213,16 @@ addGroupDefs groupDefs indInfoRows = do
             return groupName
     return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
-buildRasFold :: (MonadIO m) => [IndividualInfo] -> Int -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> Either PoseidonException (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
-buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights = do
+buildRasFold :: (MonadIO m) => [IndividualInfo] -> Int -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
+buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
     let outgroupI = case maybeOutgroup of
             Nothing -> []
             Just o  -> conformingEntityIndices [o] indInfo
-    let leftI = [conformingEntityIndices [l] indInfo | l <- popLefts]
+        leftI = [conformingEntityIndices [l] indInfo | l <- popLefts]
         rightI = [conformingEntityIndices [r] indInfo | r <- popRights]
-    let nL = length popLefts
+        nL = length popLefts
         nR = length popRights
-    return $ FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
+    in  FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
   where
     step :: (MonadIO m) => [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
         (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
