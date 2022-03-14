@@ -101,6 +101,8 @@ runRAS rasOpts = do
 
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
+        let rasFold = buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights
+
         blockData <- runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
             let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
@@ -108,7 +110,6 @@ runRAS rasOpts = do
                 eigenstratProdInChunks = case _optJackknifeMode rasOpts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            let rasFold = buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights
             let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
         let maxK = _optMaxCutoff rasOpts
