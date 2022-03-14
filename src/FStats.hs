@@ -78,7 +78,6 @@ data FStat = F4 [Int] [Int] [Int] [Int]
     | F2 [Int] [Int]
     | PWM [Int] [Int]
 
-
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos

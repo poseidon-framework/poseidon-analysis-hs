@@ -4,27 +4,21 @@ module RAS where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq,
-                                              computeJackknife)
+                                              computeJackknife, PopConfig(..), GroupDef, XerxesException(..))
 
-import           Control.Exception           (Exception, throwIO)
+import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
-import           Control.Monad               (forM, forM_, unless, when)
-import           Control.Monad.Catch         (throwM)
+import           Control.Monad               (forM_, unless, when)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import           Data.Aeson                  (FromJSON, Object, parseJSON,
-                                              withObject, (.:), (.:?))
-import           Data.Aeson.Types            (Parser)
 import qualified Data.ByteString             as B
-import           Data.HashMap.Strict         (toList)
 import           Data.List                   (intercalate, nub, (\\))
-import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 
 import           Data.Yaml                   (decodeEither')
-import           Debug.Trace                 (trace)
+-- import           Debug.Trace                 (trace)
 import           Lens.Family2                (view)
 
 import           Pipes                       (cat, (>->))
@@ -32,9 +26,7 @@ import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
 import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
-                                              SignedEntitiesList,
                                               conformingEntityIndices,
-                                              entitiesListP, entitySpecParser,
                                               findNonExistentEntities,
                                               indInfoConformsToEntitySpec,
                                               indInfoFindRelevantPackageNames,
@@ -46,7 +38,6 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointIndividualInfo,
                                               readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes     (IndividualInfo (..))
-import           Poseidon.Utils              (PoseidonException (..))
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom (..))
@@ -54,7 +45,6 @@ import           System.IO                   (IOMode (..), hPutStrLn, stderr,
                                               withFile, hPrint)
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
-import qualified Text.Parsec                 as P
 
 data RASOptions = RASOptions
     { _optBaseDirs       :: [FilePath]
@@ -67,54 +57,6 @@ data RASOptions = RASOptions
     , _optMaxSnps        :: Maybe Int
     }
     deriving (Show)
-
-type GroupDef = (String, SignedEntitiesList)
-
-data PopConfig = PopConfigYamlStruct
-    { popConfigGroupDef :: [GroupDef]
-    , popConfigLefts    :: EntitiesList
-    , popConfigRights   :: EntitiesList
-    , popConfigOutgroup :: Maybe PoseidonEntity
-    }
-
-instance FromJSON PopConfig where
-    parseJSON = withObject "PopConfigYamlStruct" $ \v -> PopConfigYamlStruct
-        <$> parseGroupDefsFromJSON v
-        <*> parsePopSpecsFromJSON v "popLefts"
-        <*> parsePopSpecsFromJSON v "popRights"
-        <*> parseMaybePopSpecFromJSON v "outgroup"
-      where
-        parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
-        parseGroupDefsFromJSON v = do
-            maybeObj <- v .:? "groupDefs"
-            case maybeObj of
-                Nothing -> return []
-                Just obj -> return $ do
-                    (key, value) <- toList obj
-                    case P.runParser entitiesListP () "" value of
-                        Left err -> fail (show err)
-                        Right p  -> return (key, p)
-        parsePopSpecsFromJSON :: Object -> Text -> Parser [PoseidonEntity]
-        parsePopSpecsFromJSON v label = do
-            popDefStrings <- v .: label
-            forM popDefStrings $ \popDefString -> do
-                case P.runParser entitySpecParser () "" popDefString of
-                    Left err -> fail (show err)
-                    Right p  -> return p
-        parseMaybePopSpecFromJSON :: Object -> Text -> Parser (Maybe PoseidonEntity)
-        parseMaybePopSpecFromJSON v label = do
-            maybePopDefString <- v .:? label
-            case maybePopDefString of
-                Nothing -> return Nothing
-                Just p -> case P.runParser entitySpecParser () "" p of
-                    Left err -> fail (show err)
-                    Right p' -> return (Just p')
-
-data RascalException = PopConfigYamlException FilePath String
-    | GroupDefException String
-    deriving (Show)
-
-instance Exception RascalException
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
