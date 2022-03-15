@@ -1,24 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq,
-computeJackknife, P.runParser, PopConfig(..), GroupDef, XerxesException(..)) where
+computeJackknife, P.runParser, PopConfig(..), GroupDef, XerxesException(..), readPopConfig,
+addGroupDefs, computeAlleleCount) where
 
 import           Control.Applicative        ((<|>))
-import           Control.Exception          (Exception)
+import           Control.Exception          (Exception, throwIO)
 import           Control.Monad              (forM)
 import           Data.Aeson                 (FromJSON, Object, parseJSON,
                                              withObject, (.:), (.:?))
 import           Data.Aeson.Types           (Parser)
-import Data.Char (isSpace)
+import qualified Data.ByteString            as B
+import           Data.Char                  (isSpace)
 import           Data.HashMap.Strict        (toList)
+import           Data.Vector                ((!))
+import           Data.Yaml                  (decodeEither')
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 
 import           Data.Text                  (Text)
-import           Data.Vector                ((!))
 import           Poseidon.EntitiesList      (EntitiesList, PoseidonEntity (..),
                                              SignedEntitiesList, entitiesListP,
-                                             entitySpecParser)
+                                             entitySpecParser, indInfoConformsToEntitySpec)
+import           Poseidon.SecondaryTypes    (IndividualInfo (..))
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
 
@@ -55,17 +59,22 @@ sepByNparser n p s = do
 
 computeAlleleFreq :: GenoLine -> [Int] -> Maybe Double
 computeAlleleFreq line indices =
-    let nrNonMissing = (2*) . length . filter (/=Missing) . map (line !) $ indices
-        nrDerived = sum $ do
-            i <- indices
-            case line ! i of
-                HomRef  -> return (0 :: Integer)
-                Het     -> return 1
-                HomAlt  -> return 2
-                Missing -> return 0
+    let (nrDerived, nrNonMissing) = computeAlleleCount line indices
     in  if nrNonMissing > 0
         then Just (fromIntegral nrDerived / fromIntegral nrNonMissing)
         else Nothing
+
+computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
+computeAlleleCount line indices =
+    let nrNonMissing = length . filter (/=Missing) . map (line !) $ indices
+        nrDerived = sum $ do
+            i <- indices
+            case line ! i of
+                HomRef  -> return (0 :: Int)
+                Het     -> return 1
+                HomAlt  -> return 2
+                Missing -> return 0
+    in  (nrDerived, 2 * nrNonMissing)
 
 computeJackknife :: [Int] -> [Double] -> (Double, Double)
 computeJackknife weights values =
@@ -123,3 +132,19 @@ data XerxesException = PopConfigYamlException FilePath String
     deriving (Show)
 
 instance Exception XerxesException
+
+readPopConfig :: FilePath -> IO PopConfig
+readPopConfig fn = do
+    bs <- B.readFile fn
+    case decodeEither' bs of
+        Left err -> throwIO $ PopConfigYamlException fn (show err)
+        Right x  -> return x
+
+addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
+addGroupDefs groupDefs indInfoRows = do
+    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
+    let additionalGroupNames = do
+            (groupName, signedEntityList) <- groupDefs
+            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
+            return groupName
+    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}

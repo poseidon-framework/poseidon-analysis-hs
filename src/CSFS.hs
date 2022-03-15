@@ -1,11 +1,35 @@
 module CSFS where
 
-import Utils (PopConfig(..))
+import           Utils                       (PopConfig (..), addGroupDefs,
+                                              computeAlleleCount,
+                                              computeAlleleFreq, readPopConfig)
 
-import qualified Data.Vector as V
-import           SequenceFormats.Utils (Chrom (..))
+import           Control.Foldl               (FoldM (..), impurely)
+import           Control.Monad               (unless)
+import           Control.Monad.IO.Class      (MonadIO, liftIO)
+import qualified Data.ByteString             as B
+import           Data.List                   (intercalate, nub, (\\))
+import qualified Data.Vector                 as V
+import qualified Data.Vector.Unboxed         as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
+import           Pipes                       (cat, (>->))
 import qualified Pipes.Prelude               as P
-import           Poseidon.Package            (PackageReadOptions (..))
+import           Pipes.Safe                  (runSafeT)
+import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
+                                              conformingEntityIndices,
+                                              findNonExistentEntities,
+                                              indInfoFindRelevantPackageNames,
+                                              underlyingEntity)
+import           Poseidon.Package            (PackageReadOptions (..),
+                                              PoseidonPackage (..),
+                                              defaultPackageReadOptions,
+                                              getJointGenotypeData,
+                                              getJointIndividualInfo,
+                                              readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes     (IndividualInfo (..))
+import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..), GenoLine)
+import           SequenceFormats.Utils       (Chrom (..))
+import           System.IO                   (hPutStrLn, stderr)
 
 data CSFSOptions = CSFSOptions
     { _csfsBaseDirs       :: [FilePath]
@@ -29,7 +53,7 @@ runCSFS csfsOpts = do
         Nothing -> return ()
         Just o  -> hPutStrLn stderr $ "Found outgroup: " ++ show o
 
-    allPackages <- readPoseidonPackageCollection pacReadOpts (_optBaseDirs rasOpts)
+    allPackages <- readPoseidonPackageCollection pacReadOpts (_csfsBaseDirs csfsOpts)
     hPutStrLn stderr ("Loaded " ++ show (length allPackages) ++ " packages")
 
     let outgroupSpec = case maybeOutgroup of
@@ -51,13 +75,13 @@ runCSFS csfsOpts = do
         mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
 
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
-        let csfsFold = buildCSFSfold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights
+        let csfsFold = buildCSFSfold jointIndInfo (_csfsMaxMissingness csfsOpts) maybeOutgroup popLefts popRights
 
         csfsResults <- runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-            let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
-                    >-> capNrSnps (_optMaxSnps rasOpts)
-            impurely foldM csfsFold eigenstratProdFiltered
+            let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_csfsExcludeChroms csfsOpts))
+                    >-> capNrSnps (_csfsMaxSnps csfsOpts)
+            impurely P.foldM csfsFold eigenstratProdFiltered
         print csfsResults
         -- let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
         -- let tableB = do
@@ -83,7 +107,7 @@ runCSFS csfsOpts = do
     capNrSnps Nothing  = cat
     capNrSnps (Just n) = P.take n
 
-buildCSFSfold :: (MonadIO m) => [IndividualInfo] -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) (V.Vector Int)
+buildCSFSfold :: (MonadIO m) => [IndividualInfo] -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) (VU.Vector Int)
 buildCSFSfold indInfo maxM maybeOutgroup popLefts popRights =
     let outgroupI = case maybeOutgroup of
             Nothing -> []
@@ -92,8 +116,23 @@ buildCSFSfold indInfo maxM maybeOutgroup popLefts popRights =
         rightI = [conformingEntityIndices [r] indInfo | r <- popRights]
         nL = length popLefts
         nR = length popRights
-    in  FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
+    in  FoldM (step outgroupI leftI rightI) (initialise leftI rightI) extract
   where
-    step :: [Int] -> [[Int]] -> [[Int]] -> VUM.IOVector Int -> (EigenstratSnpEntry, GenoLine) -> m (VUM.IOVector Int)
+    step :: (MonadIO m) => [Int] -> [[Int]] -> [[Int]] -> VUM.IOVector Int -> (EigenstratSnpEntry, GenoLine) -> m (VUM.IOVector Int)
     step outgroupI leftI rightI vals (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
-        
+        let alleleCountPairs = map (computeAlleleCount genoLine) rightI
+            totalDerived = sum . map fst $ alleleCountPairs
+            totalNonMissing = sum . map snd $ alleleCountPairs
+            totalHaps = 2 * sum (map length rightI)
+            missingness = fromIntegral (totalHaps - totalNonMissing) / fromIntegral totalHaps
+        let outgroupFreq = if null outgroupI then Just 0.0 else computeAlleleFreq genoLine outgroupI
+        case outgroupFreq of
+            Nothing -> return vals
+            Just oFreq -> do
+                let directedTotalCount = if oFreq < 0.5 then totalDerived else totalHaps - totalDerived
+                liftIO $ VUM.modify vals (+1) directedTotalCount
+                return vals
+    initialise :: (MonadIO m) => [[Int]] -> [[Int]] -> m (VUM.IOVector Int)
+    initialise leftI rightI = liftIO $ VUM.replicate (2 * sum (map length rightI) + 1) 0
+    extract :: (MonadIO m) => VUM.IOVector Int -> m (VU.Vector Int)
+    extract vals = liftIO $ VU.freeze vals

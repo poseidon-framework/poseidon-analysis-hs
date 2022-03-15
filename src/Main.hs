@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+import           CSFS                       (CSFSOptions (..), runCSFS)
 import           FStats                     (FStatSpec (..), FstatsOptions (..),
                                              fStatSpecParser, runFstats)
-import           RAS                        (RASOptions (..),
-                                             runRAS)
+import           RAS                        (RASOptions (..), runRAS)
 import           Utils                      (JackknifeMode (..), runParser)
 
 import           Paths_poseidon_analysis_hs (version)
@@ -24,6 +24,7 @@ import           Text.Read                  (readEither)
 
 data Options = CmdFstats FstatsOptions
     | CmdRAS RASOptions
+    | CmdCSFS CSFSOptions
 
 main :: IO ()
 main = do
@@ -42,6 +43,7 @@ runCmd :: Options -> IO ()
 runCmd o = case o of
     CmdFstats opts -> runFstats opts
     CmdRAS opts    -> runRAS opts
+    CmdCSFS opts   -> runCSFS opts
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
@@ -64,13 +66,15 @@ renderVersion =
 optParser :: OP.Parser Options
 optParser = OP.subparser $
     OP.command "fstats" fstatsOptInfo <>
-    OP.command "ras" rasOptInfo
+    OP.command "ras" rasOptInfo <>
+    OP.command "csfs" csfsOptInfo
   where
     fstatsOptInfo = OP.info (OP.helper <*> (CmdFstats <$> fstatsOptParser))
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
     rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
         (OP.progDesc "Compute RAS statistics on groups and individuals within and across Poseidon packages")
-
+    csfsOptInfo = OP.info (OP.helper <*> (CmdCSFS <$> csfsOptParser))
+        (OP.progDesc "Compute the conditional site frequency spectrum within and across Poseidon packages")
 
 fstatsOptParser :: OP.Parser FstatsOptions
 fstatsOptParser = FstatsOptions <$> parseBasePaths
@@ -155,7 +159,7 @@ parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm
     OP.help "define a maximal missingness for the right populations in the RAS statistics." <>
     OP.value 0.1 <> OP.showDefault)
 
-parseTableOutFile :: OP.Parser FilePath 
+parseTableOutFile :: OP.Parser FilePath
 parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
     OP.help "the file to which results are written as tab-separated file")
 
@@ -163,3 +167,12 @@ parseMaxSnps :: OP.Parser (Maybe Int)
 parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
     OP.help "Stop after a maximum nr of snps has been processed. Useful for short test runs" <>
     OP.value Nothing <> OP.hidden)
+
+csfsOptParser :: OP.Parser CSFSOptions
+csfsOptParser = CSFSOptions <$>
+    parseBasePaths <*>
+    parseExcludeChroms <*>
+    parsePopConfigFile <*>
+    parseMaxMissingness <*>
+    parseTableOutFile <*>
+    parseMaxSnps

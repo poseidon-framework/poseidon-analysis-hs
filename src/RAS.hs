@@ -4,7 +4,8 @@ module RAS where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq,
-                                              computeJackknife, PopConfig(..), GroupDef, XerxesException(..))
+                                              computeJackknife, PopConfig(..), GroupDef, XerxesException(..),
+                                              readPopConfig, addGroupDefs, computeAlleleCount)
 
 import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
@@ -143,22 +144,6 @@ runRAS rasOpts = do
     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block
 
-readPopConfig :: FilePath -> IO PopConfig
-readPopConfig fn = do
-    bs <- B.readFile fn
-    case decodeEither' bs of
-        Left err -> throwIO $ PopConfigYamlException fn (show err)
-        Right x  -> return x
-
-addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
-addGroupDefs groupDefs indInfoRows = do
-    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
-    let additionalGroupNames = do
-            (groupName, signedEntityList) <- groupDefs
-            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
-            return groupName
-    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
-
 buildRasFold :: (MonadIO m) => [IndividualInfo] -> Int -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
 buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
     let outgroupI = case maybeOutgroup of
@@ -236,15 +221,3 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
                             return $ val / fromIntegral (countsF VU.! i)
             return $ BlockData startPos endPos (VU.toList countsF) normalisedVals
         _ -> error "this should never happen"
-
-computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
-computeAlleleCount line indices =
-    let nrNonMissing = length . filter (/=Missing) . map (line V.!) $ indices
-        nrDerived = sum $ do
-            i <- indices
-            case line V.! i of
-                HomRef  -> return (0 :: Int)
-                Het     -> return 1
-                HomAlt  -> return 2
-                Missing -> return 0
-    in  (nrDerived, 2 * nrNonMissing)
