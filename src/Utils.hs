@@ -3,11 +3,13 @@
 module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq,
 computeJackknife, P.runParser, PopConfig(..), GroupDef, XerxesException(..)) where
 
+import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
 import           Control.Monad              (forM)
 import           Data.Aeson                 (FromJSON, Object, parseJSON,
                                              withObject, (.:), (.:?))
 import           Data.Aeson.Types           (Parser)
+import Data.Char (isSpace)
 import           Data.HashMap.Strict        (toList)
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
@@ -28,8 +30,19 @@ data JackknifeMode = JackknifePerN Int
 -- | A helper type to represent a genomic position.
 type GenomPos = (Chrom, Int)
 
+customEntitySpecParser :: P.Parser PoseidonEntity
+customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
+    where
+    parsePac   = Pac   <$> P.between (P.char '*') (P.char '*') parseName
+    parseGroup = Group <$> parseName
+    parseInd   = Ind   <$> P.between (P.char '<') (P.char '>') parseName
+    charList :: [Char]
+    charList = ",<>*()"
+    parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
+
+
 popSpecsNparser :: Int -> P.Parser [PoseidonEntity]
-popSpecsNparser n = sepByNparser n entitySpecParser (P.char ',' <* P.spaces)
+popSpecsNparser n = sepByNparser n customEntitySpecParser (P.char ',' <* P.spaces)
 
 sepByNparser :: Int -> P.Parser a -> P.Parser sep -> P.Parser [a]
 sepByNparser 0 _ _ = return []
