@@ -2,6 +2,7 @@ module CSFS where
 
 import Utils (PopConfig(..))
 
+import qualified Data.Vector as V
 import           SequenceFormats.Utils (Chrom (..))
 import qualified Pipes.Prelude               as P
 import           Poseidon.Package            (PackageReadOptions (..))
@@ -57,29 +58,42 @@ runCSFS csfsOpts = do
             let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_optExcludeChroms rasOpts))
                     >-> capNrSnps (_optMaxSnps rasOpts)
             impurely foldM csfsFold eigenstratProdFiltered
-        let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
-        let tableB = do
-                cumul <- [False, True]
-                (i, popLeft) <- zip [0..] popLefts
-                (j, popRight) <- zip [0..] popRights
-                k <- [0 .. (maxK - 2)]
-                let counts = [blockSiteCount bd !! i | bd <- blockData]
-                    vals = if cumul then
-                            [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
-                        else
-                            [((blockVals bd !! k) !! i) !! j | bd <- blockData]
-                let (val, err) = computeJackknife counts vals
-                return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
-        let colSpecs = replicate 7 (column expand def def def)
-        putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
-        withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
-            hPutStrLn h $ intercalate "\t" tableH
-            forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
-        return ()
+        print csfsResults
+        -- let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
+        -- let tableB = do
+        --         cumul <- [False, True]
+        --         (i, popLeft) <- zip [0..] popLefts
+        --         (j, popRight) <- zip [0..] popRights
+        --         k <- [0 .. (maxK - 2)]
+        --         let counts = [blockSiteCount bd !! i | bd <- blockData]
+        --             vals = if cumul then
+        --                     [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
+        --                 else
+        --                     [((blockVals bd !! k) !! i) !! j | bd <- blockData]
+        --         let (val, err) = computeJackknife counts vals
+        --         return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
+        -- let colSpecs = replicate 7 (column expand def def def)
+        -- putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+        -- withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
+        --     hPutStrLn h $ intercalate "\t" tableH
+        --     forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
+        -- return ()
   where
     chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
     capNrSnps Nothing  = cat
     capNrSnps (Just n) = P.take n
 
-buildCSFSfold :: (MonadIO m) => [IndividualInfo] -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
+buildCSFSfold :: (MonadIO m) => [IndividualInfo] -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) (V.Vector Int)
 buildCSFSfold indInfo maxM maybeOutgroup popLefts popRights =
+    let outgroupI = case maybeOutgroup of
+            Nothing -> []
+            Just o  -> conformingEntityIndices [o] indInfo
+        leftI = [conformingEntityIndices [l] indInfo | l <- popLefts]
+        rightI = [conformingEntityIndices [r] indInfo | r <- popRights]
+        nL = length popLefts
+        nR = length popRights
+    in  FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
+  where
+    step :: [Int] -> [[Int]] -> [[Int]] -> VUM.IOVector Int -> (EigenstratSnpEntry, GenoLine) -> m (VUM.IOVector Int)
+    step outgroupI leftI rightI vals (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+        

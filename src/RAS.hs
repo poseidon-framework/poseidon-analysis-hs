@@ -194,7 +194,7 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
                     let directedTotalCount = if oFreq < 0.5 then totalDerived else totalHaps - totalDerived
                     -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                     when (directedTotalCount >= 2 && directedTotalCount <= maxK) $ do
-                        liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
+                        -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                         -- main loop
                         let nL = length popLefts
                             nR = length popRights

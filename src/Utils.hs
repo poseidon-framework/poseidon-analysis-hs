@@ -42,7 +42,7 @@ sepByNparser n p s = do
 
 computeAlleleFreq :: GenoLine -> [Int] -> Maybe Double
 computeAlleleFreq line indices =
-    let nrNonMissing = length . filter (/=Missing) . map (line !) $ indices
+    let nrNonMissing = (2*) . length . filter (/=Missing) . map (line !) $ indices
         nrDerived = sum $ do
             i <- indices
             case line ! i of
