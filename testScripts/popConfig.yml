@@ -22,4 +22,4 @@ popRights:
 - FIN2
 - GBR2
 - IBS2
-# outgroup: <Chimp.REF>
+outgroup: <Chimp.REF>
