@@ -8,41 +8,43 @@ module FStats (
     , readStatSpecsFromFile
 ) where
 
-import           Utils                      (GenomPos, JackknifeMode (..),
-                                             computeAlleleFreq,
-                                             computeJackknife, popSpecsNparser)
+import           Utils                       (GenomPos, JackknifeMode (..),
+                                              computeAlleleFreq,
+                                              computeJackknife, popSpecsNparser)
 
-import           Control.Applicative        ((<|>))
-import           Control.Exception          (throwIO)
-import           Control.Foldl              (Fold (..), list, purely)
-import           Control.Monad              (forM_)
-import           Control.Monad.Catch        (throwM)
-import           Data.List                  (intercalate, nub,
-                                             transpose)
-import           Lens.Family2               (view)
-import           Pipes                      ((>->), cat)
-import           Pipes.Group                (chunksOf, folds, groupsBy)
-import qualified Pipes.Prelude              as P
-import           Pipes.Safe                 (runSafeT)
-import           Poseidon.EntitiesList      (PoseidonEntity (..),
-                                             filterRelevantPackages,
-                                             conformingEntityIndices,
-                                             findNonExistentEntities)
-import           Poseidon.Package           (PackageReadOptions (..),
-                                             PoseidonPackage (..),
-                                             defaultPackageReadOptions,
-                                             getJointGenotypeData,
-                                             getJointIndividualInfo,
-                                             readPoseidonPackageCollection)
-import           Poseidon.SecondaryTypes    (IndividualInfo (..))
-import           Poseidon.Utils             (PoseidonException (..))
-import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..), GenoLine)
-import           SequenceFormats.Utils      (Chrom)
-import           System.IO                  (hPutStrLn, stderr)
-import           Text.Layout.Table          (asciiRoundS, column, def, expand,
-                                             rowsG, tableString, titlesH)
-import qualified Text.Parsec                as P
-import qualified Text.Parsec.String         as P
+import           Control.Applicative         ((<|>))
+import           Control.Exception           (throwIO)
+import           Control.Foldl               (FoldM (..), list, purely, impurely)
+import           Control.Monad               (forM_)
+import           Control.Monad.Catch         (throwM)
+import           Control.Monad.IO.Class      (MonadIO, liftIO)
+import           Data.List                   (intercalate, nub, transpose)
+import qualified Data.Vector.Unboxed         as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
+import           Lens.Family2                (view)
+import           Pipes                       (cat, (>->))
+import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
+import qualified Pipes.Prelude               as P
+import           Pipes.Safe                  (runSafeT)
+import           Poseidon.EntitiesList       (PoseidonEntity (..),
+                                              conformingEntityIndices,
+                                              filterRelevantPackages,
+                                              findNonExistentEntities)
+import           Poseidon.Package            (PackageReadOptions (..),
+                                              PoseidonPackage (..),
+                                              defaultPackageReadOptions,
+                                              getJointGenotypeData,
+                                              getJointIndividualInfo,
+                                              readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes     (IndividualInfo (..))
+import           Poseidon.Utils              (PoseidonException (..))
+import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..), GenoLine)
+import           SequenceFormats.Utils       (Chrom)
+import           System.IO                   (hPutStrLn, stderr)
+import           Text.Layout.Table           (asciiRoundS, column, def, expand,
+                                              rowsG, tableString, titlesH)
+import qualified Text.Parsec                 as P
+import qualified Text.Parsec.String          as P
 
 -- | A datatype representing the command line options for the F-Statistics command
 data FstatsOptions = FstatsOptions
@@ -57,7 +59,7 @@ data FstatsOptions = FstatsOptions
     , _foStatSpecsFile   :: Maybe FilePath -- ^ a file listing F-statistics to compute
     -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     , _foRawOutput       :: Bool -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
-    , _foMaxSnps        :: Maybe Int
+    , _foMaxSnps         :: Maybe Int
     }
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
@@ -83,7 +85,7 @@ data BlockData = BlockData
     { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos
     , blockSiteCount :: Int
-    , blockVal       :: Double
+    , blockStatVal   :: [Double]
     }
     deriving (Show)
 
@@ -117,39 +119,46 @@ pwmSpecParser = do
     [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
     return $ PWMspec a b
 
-statSpecsFold :: [IndividualInfo] -> [FStatSpec] -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) [BlockData])
-statSpecsFold indInfo fStatSpecs = do
-    listOfFolds <- mapM (statSpecFold indInfo) fStatSpecs
-    return $ sequenceA listOfFolds
-
-statSpecFold :: [IndividualInfo] -> FStatSpec -> Either PoseidonException (Fold (EigenstratSnpEntry, GenoLine) BlockData)
-statSpecFold indInfo fStatSpec = do
+buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
+buildStatSpecsFold indInfo fStatSpecs =
     let getI = conformingEntityIndices
         i = indInfo
-    let fStat = case fStatSpec of
-            F4Spec  a b c d -> F4  (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
-            F3Spec  a b c   -> F3  (getI [a] i) (getI [b] i) (getI [c] i)
-            F2Spec  a b     -> F2  (getI [a] i) (getI [b] i)
-            PWMspec a b     -> PWM (getI [a] i) (getI [b] i)
-    return $ Fold (step fStat) initialize extract
+        fStats = do
+            fStatSpec <- fStatSpecs
+            case fStatSpec of
+                F4Spec  a b c d -> return $ F4  (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
+                F3Spec  a b c   -> return $ F3  (getI [a] i) (getI [b] i) (getI [c] i)
+                F2Spec  a b     -> return $ F2  (getI [a] i) (getI [b] i)
+                PWMspec a b     -> return $ PWM (getI [a] i) (getI [b] i)
+    in  FoldM (step fStats) initialize extract
   where
-    step :: FStat -> (Maybe GenomPos, Maybe GenomPos, Int, Double) ->
-        (EigenstratSnpEntry, GenoLine) -> (Maybe GenomPos, Maybe GenomPos, Int, Double)
-    step fstat (maybeStartPos, _, count, val) (EigenstratSnpEntry c p _ _ _ _, genoLine) =
+    step :: (MonadIO m) => [FStat] -> (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) ->
+        (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
+    step fstats (maybeStartPos, _, count, normVec, valVec) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         let newStartPos = case maybeStartPos of
                 Nothing       -> Just (c, p)
                 Just (c', p') -> Just (c', p')
             newEndPos = Just (c, p)
-        in  case computeFStat fstat genoLine of
-                Just v  -> (newStartPos, newEndPos, count + 1, val + v)
-                Nothing -> (newStartPos, newEndPos, count + 1, val)
-    initialize :: (Maybe GenomPos, Maybe GenomPos, Int, Double)
-    initialize = (Nothing, Nothing, 0, 0.0)
-    extract :: (Maybe GenomPos, Maybe GenomPos, Int, Double) -> BlockData
-    extract (maybeStartPos, maybeEndPos, count, totalVal) =
+        forM_ (zip [0..] fstats) $ \(i, fstat) -> do
+            case computeFStat fstat genoLine of
+                Just v  -> do
+                    liftIO $ VUM.modify normVec (+1) i
+                    liftIO $ VUM.modify valVec (+v) i
+                Nothing -> return ()
+        return (newStartPos, newEndPos, count + 1, normVec, valVec)
+    initialize :: (MonadIO m) => m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
+    initialize = do
+        normVec <- liftIO $ VUM.replicate (length fStatSpecs) 0
+        valVec <- liftIO $ VUM.replicate (length fStatSpecs) 0.0
+        return (Nothing, Nothing, 0, normVec, valVec)
+    extract :: (MonadIO m) => (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) -> m BlockData
+    extract (maybeStartPos, maybeEndPos, count, normVec, valVec) = do
         let Just startPos = maybeStartPos
             Just endPos = maybeEndPos
-        in  BlockData startPos endPos count (totalVal / fromIntegral count)
+        normVecF <- liftIO $ VU.freeze normVec
+        valVecF <- liftIO $ VU.freeze valVec
+        let statVals = zipWith (\v n -> v / fromIntegral n) (VU.toList valVecF) (VU.toList normVecF)
+        return $ BlockData startPos endPos count statVals
 
 computeFStat :: FStat -> GenoLine -> Maybe Double
 computeFStat fStat gL = case fStat of
@@ -193,19 +202,20 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
             hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
             forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
             hPutStrLn stderr $ "Computing stats " ++ show statSpecs
-            blockData <- runSafeT $ do
+            let jointIndInfo = getJointIndividualInfo relevantPackages
+            let statsFold = buildStatSpecsFold jointIndInfo statSpecs
+            blocks <- runSafeT $ do
                 (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-                let jointIndInfo = getJointIndividualInfo relevantPackages
                 let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps maxSnps
                     eigenstratProdInChunks = case jackknifeMode of
                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-                statsFold <- case statSpecsFold jointIndInfo statSpecs of
-                    Left e  ->  throwM e
-                    Right f -> return f
-                let summaryStatsProd = purely folds statsFold eigenstratProdInChunks
+                let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
                 purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-            let jackknifeEstimates = [computeJackknife (map blockSiteCount blocks) (map blockVal blocks) | blocks <- transpose blockData]
+            let jackknifeWeights = map blockSiteCount blocks
+            let jackknifeEstimates = do
+                    (i, _) <- zip [0..] statSpecs
+                    return $ computeJackknife jackknifeWeights (map ((!!i) . blockStatVal) blocks)
                 colSpecs = replicate 4 (column expand def def def)
                 tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
                 tableB = do
@@ -224,9 +234,9 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
         chrom1 == chrom2
     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
-    showBlockLogOutput blocks = "computing chunk range " ++ show (blockStartPos (head blocks)) ++ " - " ++
-        show (blockEndPos (head blocks)) ++ ", size " ++ (show . blockSiteCount . head) blocks ++ ", values " ++
-        (show . map blockVal) blocks
+    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ ", values " ++
+        (show . blockStatVal) block
 
 readStatSpecsFromFile :: FilePath -> IO [FStatSpec]
 readStatSpecsFromFile statSpecsFile = do
