@@ -51,8 +51,9 @@ data RASOptions = RASOptions
     , _optJackknifeMode  :: JackknifeMode
     , _optExcludeChroms  :: [Chrom]
     , _optPopConfig      :: FilePath
-    , _optMaxCutoff      :: Int
+    , _optMaxCutoff      :: Maybe Int
     , _optMaxMissingness :: Double
+    , _optFullTable      :: Bool
     , _optTableOutFile   :: FilePath
     , _optMaxSnps        :: Maybe Int
     }
@@ -100,6 +101,7 @@ runRAS rasOpts = do
         mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
 
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
+        let (rasFold, nrK) = buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights
 
         blockData <- runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
@@ -108,16 +110,16 @@ runRAS rasOpts = do
                 eigenstratProdInChunks = case _optJackknifeMode rasOpts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            let rasFold = buildRasFold jointIndInfo (_optMaxCutoff rasOpts) (_optMaxMissingness rasOpts) maybeOutgroup popLefts popRights
             let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
+            liftIO $ hPutStrLn stderr "performing counts"
             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-        let maxK = _optMaxCutoff rasOpts
+        liftIO $ hPutStrLn stderr "collating results"
         let tableH = ["Left", "Right", "k", "Cumulative", "Norm", "RAS", "StdErr"]
         let tableB = do
-                cumul <- [False, True]
+                cumul <- if _optFullTable rasOpts then [False, True] else [True]
                 (i, popLeft) <- zip [0..] popLefts
                 (j, popRight) <- zip [0..] popRights
-                k <- [0 .. (maxK - 2)]
+                k <- if _optFullTable rasOpts then [0 .. (nrK - 2)] else [nrK - 2]
                 let counts = [blockSiteCount bd !! i | bd <- blockData]
                     vals = if cumul then
                             [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
@@ -158,8 +160,8 @@ addGroupDefs groupDefs indInfoRows = do
             return groupName
     return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
-buildRasFold :: (MonadIO m) => [IndividualInfo] -> Int -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
-buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
+buildRasFold :: (MonadIO m) => [IndividualInfo] -> Maybe Int -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> (FoldM m (EigenstratSnpEntry, GenoLine) BlockData, Int)
+buildRasFold indInfo maybeMaxK maxM maybeOutgroup popLefts popRights =
     let outgroupI = case maybeOutgroup of
             Nothing -> []
             Just o  -> conformingEntityIndices [o] indInfo
@@ -167,7 +169,10 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
         rightI = [conformingEntityIndices [r] indInfo | r <- popRights]
         nL = length popLefts
         nR = length popRights
-    in  FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
+        nrK = case maybeMaxK of
+            Nothing -> (2*) . sum . map length $ rightI
+            Just maxK -> maxK
+    in  (FoldM (step outgroupI leftI rightI) (initialise nL nR nrK) (extract nrK), nrK)
   where
     step :: (MonadIO m) => [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
         (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
@@ -192,8 +197,11 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
                         when (any (/= Missing) [genoLine V.! j | j <- i2s]) . liftIO $ VUM.modify counts (+1) i1
                     let directedTotalCount = if oFreq < 0.5 then totalDerived else totalHaps - totalDerived
                     -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
-                    when (directedTotalCount >= 2 && directedTotalCount <= maxK) $ do
-                        liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
+                    let condition = case maybeMaxK of
+                            Nothing -> directedTotalCount >= 2
+                            Just maxK -> directedTotalCount >= 2 && directedTotalCount <= maxK
+                    when condition $ do
+                        -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                         -- main loop
                         let nL = length popLefts
                             nR = length popRights
@@ -211,21 +219,21 @@ buildRasFold indInfo maxK maxM maybeOutgroup popLefts popRights =
                                 let index = k * nL * nR + i * nR + j
                                 liftIO $ VUM.modify vals (+(x * y)) index
         return (newStartPos, newEndPos, counts, vals)
-    initialise :: (MonadIO m) => Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
-    initialise nL nR = do
+    initialise :: (MonadIO m) => Int -> Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
+    initialise nL nR nrK = do
         countVec <- liftIO $ VUM.replicate nL 0
-        valVec <- liftIO $ VUM.replicate ((maxK - 1) * nL * nR) 0.0
+        valVec <- liftIO $ VUM.replicate ((nrK - 1) * nL * nR) 0.0
         return (Nothing, Nothing, countVec, valVec)
-    extract :: (MonadIO m) => (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
+    extract :: (MonadIO m) => Int -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
             m BlockData
-    extract (maybeStartVec, maybeEndVec, counts, vals) = case (maybeStartVec, maybeEndVec) of
+    extract nrK (maybeStartVec, maybeEndVec, counts, vals) = case (maybeStartVec, maybeEndVec) of
         (Just startPos, Just endPos) -> do
             let nLefts = VUM.length counts
-                nRights = VUM.length vals `div` (nLefts * (maxK - 1))
+                nRights = VUM.length vals `div` (nLefts * (nrK - 1))
             countsF <- liftIO $ VU.freeze counts
             valsF <- liftIO $ VU.freeze vals
             let normalisedVals = do
-                    k <- [0 .. (maxK - 2)]
+                    k <- [0 .. (nrK - 2)]
                     return $ do
                         i <- [0 .. (nLefts - 1)]
                         return $ do

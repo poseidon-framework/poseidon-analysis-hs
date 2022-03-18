@@ -2,21 +2,20 @@
 
 import           FStats                     (FStatSpec (..), FstatsOptions (..),
                                              fStatSpecParser, runFstats)
-import           RAS                        (RASOptions (..),
-                                             runRAS)
+import           RAS                        (RASOptions (..), runRAS)
 import           Utils                      (JackknifeMode (..), runParser)
 
-import           Paths_poseidon_analysis_hs (version)
-import           Poseidon.PoseidonVersion   (showPoseidonVersion,
-                                             validPoseidonVersions)
-import           Poseidon.Utils             (PoseidonException (..),
-                                             renderPoseidonException)
-
+import           Control.Applicative        ((<|>))
 import           Control.Exception          (catch)
 import           Data.ByteString.Char8      (pack, splitWith)
 import           Data.List                  (intercalate)
 import           Data.Version               (showVersion)
 import qualified Options.Applicative        as OP
+import           Paths_poseidon_analysis_hs (version)
+import           Poseidon.PoseidonVersion   (showPoseidonVersion,
+                                             validPoseidonVersions)
+import           Poseidon.Utils             (PoseidonException (..),
+                                             renderPoseidonException)
 import           SequenceFormats.Utils      (Chrom (..))
 import           System.Exit                (exitFailure)
 import           System.IO                  (hPutStrLn, stderr)
@@ -79,6 +78,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> OP.many parseStatSpecsDirect
                                 <*> parseStatSpecsFromFile
                                 <*> parseRawOutput
+                                <*> parseMaxSnps
 
 parseBasePaths :: OP.Parser [FilePath]
 parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>
@@ -139,23 +139,31 @@ rasOptParser = RASOptions <$>
     parsePopConfigFile <*>
     parseMaxCutoff <*>
     parseMaxMissingness <*>
+    parseFullTable <*>
     parseTableOutFile <*>
     parseMaxSnps
 
 parsePopConfigFile :: OP.Parser FilePath
 parsePopConfigFile = OP.option OP.str (OP.long "popConfigFile" <> OP.help "a file containing the population configuration")
 
-parseMaxCutoff :: OP.Parser Int
-parseMaxCutoff = OP.option OP.auto (OP.long "maxAlleleCount" <> OP.short 'k' <>
-    OP.help "define a maximal allele-count cutoff for the RAS statistics. " <>
-    OP.value 10 <> OP.showDefault)
+parseMaxCutoff :: OP.Parser (Maybe Int)
+parseMaxCutoff = parseK <|> parseNoCutoff
+  where
+    parseK = OP.option (Just <$> OP.auto) (OP.long "maxAlleleCount" <> OP.short 'k' <>
+        OP.help "define a maximal allele-count cutoff for the RAS statistics. " <>
+        OP.value (Just 10) <> OP.showDefault)
+    parseNoCutoff = OP.flag' Nothing (OP.long "noMaxAlleleCount" <>
+        OP.help "switch off the allele count filter. This effectively then mimics Outgroup-F3")
 
 parseMaxMissingness :: OP.Parser Double
 parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm' <>
     OP.help "define a maximal missingness for the right populations in the RAS statistics." <>
     OP.value 0.1 <> OP.showDefault)
 
-parseTableOutFile :: OP.Parser FilePath 
+parseFullTable :: OP.Parser Bool
+parseFullTable = OP.switch (OP.long "fulltable" <> OP.help "If specified, output the full RAS table over all allele counts")
+
+parseTableOutFile :: OP.Parser FilePath
 parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
     OP.help "the file to which results are written as tab-separated file")
 

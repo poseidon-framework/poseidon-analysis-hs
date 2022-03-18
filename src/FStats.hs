@@ -20,7 +20,7 @@ import           Control.Monad.Catch        (throwM)
 import           Data.List                  (intercalate, nub,
                                              transpose)
 import           Lens.Family2               (view)
-import           Pipes                      ((>->))
+import           Pipes                      ((>->), cat)
 import           Pipes.Group                (chunksOf, folds, groupsBy)
 import qualified Pipes.Prelude              as P
 import           Pipes.Safe                 (runSafeT)
@@ -57,6 +57,7 @@ data FstatsOptions = FstatsOptions
     , _foStatSpecsFile   :: Maybe FilePath -- ^ a file listing F-statistics to compute
     -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     , _foRawOutput       :: Bool -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
+    , _foMaxSnps        :: Maybe Int
     }
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
@@ -173,7 +174,7 @@ pacReadOpts = defaultPackageReadOptions {
 
 -- | The main function running the FStats command.
 runFstats :: FstatsOptions -> IO ()
-runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect maybeStatSpecsFile rawOutput) = do
+runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect maybeStatSpecsFile rawOutput maxSnps) = do
     -- load packages --
     allPackages <- readPoseidonPackageCollection pacReadOpts baseDirs
     statSpecsFromFile <- case maybeStatSpecsFile of
@@ -195,7 +196,7 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
             blockData <- runSafeT $ do
                 (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
                 let jointIndInfo = getJointIndividualInfo relevantPackages
-                let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter
+                let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps maxSnps
                     eigenstratProdInChunks = case jackknifeMode of
                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
@@ -217,6 +218,8 @@ runFstats (FstatsOptions baseDirs jackknifeMode exclusionList statSpecsDirect ma
             else putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
+    capNrSnps Nothing  = cat
+    capNrSnps (Just n) = P.take n
     chunkEigenstratByChromosome = view (groupsBy sameChrom)
     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
         chrom1 == chrom2
