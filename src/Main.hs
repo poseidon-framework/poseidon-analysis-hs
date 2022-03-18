@@ -79,6 +79,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseStatSpecsFromFile
                                 <*> parseRawOutput
                                 <*> parseMaxSnps
+                                <*> parseFullTable
 
 parseBasePaths :: OP.Parser [FilePath]
 parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>
@@ -161,7 +162,7 @@ parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm
     OP.value 0.1 <> OP.showDefault)
 
 parseFullTable :: OP.Parser Bool
-parseFullTable = OP.switch (OP.long "fulltable" <> OP.help "If specified, output the full RAS table over all allele counts")
+parseFullTable = OP.switch (OP.long "fulltable" <> OP.help "If specified, output a much more complete output table")
 
 parseTableOutFile :: OP.Parser FilePath
 parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
