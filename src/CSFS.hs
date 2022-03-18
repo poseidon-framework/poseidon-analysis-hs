@@ -32,6 +32,7 @@ import           SequenceFormats.Utils       (Chrom (..))
 import           System.IO                   (hPutStrLn, stderr, withFile, IOMode(..))
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
+import CSFS (LeftpopCondition)
 
 data CSFSOptions = CSFSOptions
     { _csfsBaseDirs       :: [FilePath]
@@ -42,6 +43,10 @@ data CSFSOptions = CSFSOptions
     , _csfsMaxSnps        :: Maybe Int
     }
     deriving (Show)
+
+data LeftpopConditioning = LeftpopNone | LeftpopJust String
+data RightpopSelection = RightpopsAll | RightpopJust String
+type ConditioningPair = (LeftpopConditioning, RightpopSelection)
 
 runCSFS :: CSFSOptions -> IO ()
 runCSFS csfsOpts = do
