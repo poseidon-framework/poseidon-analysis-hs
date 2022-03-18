@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq,
+module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq, computeAlleleCount,
 computeJackknife, P.runParser, PopConfig(..), GroupDef, XerxesException(..)) where
 
 import           Control.Applicative        ((<|>))
@@ -9,8 +9,9 @@ import           Control.Monad              (forM)
 import           Data.Aeson                 (FromJSON, Object, parseJSON,
                                              withObject, (.:), (.:?))
 import           Data.Aeson.Types           (Parser)
-import Data.Char (isSpace)
+import           Data.Char                  (isSpace)
 import           Data.HashMap.Strict        (toList)
+import qualified Data.Vector                as V
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 
@@ -53,18 +54,23 @@ sepByNparser n p s = do
     xs <- sepByNparser (n - 1) p s
     return (x:xs)
 
-computeAlleleFreq :: GenoLine -> [Int] -> Maybe Double
-computeAlleleFreq line indices =
-    let nrNonMissing = length . filter (/=Missing) . map (line !) $ indices
+computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
+computeAlleleCount line indices =
+    let nrNonMissing = length . filter (/=Missing) . map (line V.!) $ indices
         nrDerived = sum $ do
             i <- indices
-            case line ! i of
-                HomRef  -> return (0 :: Integer)
+            case line V.! i of
+                HomRef  -> return (0 :: Int)
                 Het     -> return 1
                 HomAlt  -> return 2
                 Missing -> return 0
-    in  if nrNonMissing > 0
-        then Just (fromIntegral nrDerived / fromIntegral nrNonMissing)
+    in  (nrDerived, 2 * nrNonMissing)
+
+computeAlleleFreq :: GenoLine -> [Int] -> Maybe Double
+computeAlleleFreq line indices =
+    let (nrDerivedHaps, nrNonMissingHaps) = computeAlleleCount line indices
+    in  if nrNonMissingHaps > 0
+        then Just (fromIntegral nrDerivedHaps / fromIntegral nrNonMissingHaps)
         else Nothing
 
 computeJackknife :: [Int] -> [Double] -> (Double, Double)

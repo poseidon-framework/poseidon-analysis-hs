@@ -3,7 +3,7 @@
 module RAS where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
-                                              computeAlleleFreq,
+                                              computeAlleleFreq, computeAlleleCount,
                                               computeJackknife, PopConfig(..), GroupDef, XerxesException(..))
 
 import           Control.Exception           (throwIO)
@@ -243,15 +243,3 @@ buildRasFold indInfo maybeMaxK maxM maybeOutgroup popLefts popRights =
                             return $ val / fromIntegral (countsF VU.! i)
             return $ BlockData startPos endPos (VU.toList countsF) normalisedVals
         _ -> error "this should never happen"
-
-computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
-computeAlleleCount line indices =
-    let nrNonMissing = length . filter (/=Missing) . map (line V.!) $ indices
-        nrDerived = sum $ do
-            i <- indices
-            case line V.! i of
-                HomRef  -> return (0 :: Int)
-                Het     -> return 1
-                HomAlt  -> return 2
-                Missing -> return 0
-    in  (nrDerived, 2 * nrNonMissing)

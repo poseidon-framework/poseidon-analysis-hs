@@ -9,7 +9,7 @@ module FStats (
 ) where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
-                                              computeAlleleFreq,
+                                              computeAlleleFreq, computeAlleleCount,
                                               computeJackknife, popSpecsNparser)
 
 import           Control.Applicative         ((<|>))
@@ -70,19 +70,31 @@ data FStatSpec = F4Spec PoseidonEntity PoseidonEntity PoseidonEntity PoseidonEnt
     | F3Spec PoseidonEntity PoseidonEntity PoseidonEntity
     | F2Spec PoseidonEntity PoseidonEntity
     | PWMspec PoseidonEntity PoseidonEntity
+    | FSTspec PoseidonEntity PoseidonEntity
+    | F3vanillaSpec PoseidonEntity PoseidonEntity PoseidonEntity
+    | F2vanillaSpec PoseidonEntity PoseidonEntity
+    | FSTvanillaSpec PoseidonEntity PoseidonEntity
     deriving (Eq)
 
 instance Show FStatSpec where
-    show (F4Spec  a b c d) = "F4("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ "," ++ show d ++ ")"
-    show (F3Spec  a b c  ) = "F3("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
-    show (F2Spec  a b    ) = "F2("  ++ show a ++ "," ++ show b ++ ")"
-    show (PWMspec a b    ) = "PWM(" ++ show a ++ "," ++ show b ++ ")"
+    show (F4Spec         a b c d) = "F4("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ "," ++ show d ++ ")"
+    show (F3Spec         a b c  ) = "F3("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
+    show (F2Spec         a b    ) = "F2("  ++ show a ++ "," ++ show b ++ ")"
+    show (PWMspec        a b    ) = "PWM(" ++ show a ++ "," ++ show b ++ ")"
+    show (FSTspec        a b    ) = "FST(" ++ show a ++ "," ++ show b ++ ")"
+    show (F3vanillaSpec  a b c  ) = "F3vanilla("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
+    show (F2vanillaSpec  a b    ) = "F2vanilla("  ++ show a ++ "," ++ show b ++ ")"
+    show (FSTvanillaSpec a b    ) = "FSTvanilla(" ++ show a ++ "," ++ show b ++ ")"
 
 -- | An internal datatype to represent Summary statistics with indices of individuals given as integers
-data FStat = F4 [Int] [Int] [Int] [Int]
-    | F3 [Int] [Int] [Int]
-    | F2 [Int] [Int]
-    | PWM [Int] [Int] deriving (Show)
+data FStat = F4         [Int] [Int] [Int] [Int]
+           | F3         [Int] [Int] [Int]
+           | F2         [Int] [Int]
+           | PWM        [Int] [Int]
+           | FST        [Int] [Int]
+           | F3vanilla  [Int] [Int] [Int]
+           | F2vanilla  [Int] [Int]
+           | FSTvanilla [Int] [Int] deriving (Show)
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
@@ -94,33 +106,42 @@ data BlockData = BlockData
 
 -- | A parser to parse Summary Statistic specifications.
 fStatSpecParser :: P.Parser FStatSpec
-fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecParser <|> pwmSpecParser
+fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecParser <|> P.try pwmSpecParser <|>
+    P.try fstSpecParser <|> P.try f3VanillaSpecParser <|> P.try f2VanillaSpecParser <|> fstVanillaSpecParser
+  where
+    f4SpecParser = do
+        _ <- P.string "F4"
+        [a, b, c, d] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 4)
+        return $ F4Spec a b c d
+    f3SpecParser = do
+        _ <- P.string "F3"
+        [a, b, c] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 3)
+        return $ F3Spec a b c
+    f2SpecParser = do
+        _ <- P.string "F2"
+        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
+        return $ F2Spec a b
+    pwmSpecParser = do
+        _ <- P.string "PWM"
+        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
+        return $ PWMspec a b
+    fstSpecParser = do
+        _ <- P.string "FST"
+        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
+        return $ FSTspec a b
+    f3VanillaSpecParser = do
+        _ <- P.string "F3vanilla"
+        [a, b, c] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 3)
+        return $ F3vanillaSpec a b c
+    f2VanillaSpecParser = do
+        _ <- P.string "F2vanilla"
+        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
+        return $ F2vanillaSpec a b
+    fstVanillaSpecParser = do
+        _ <- P.string "FSTvanilla"
+        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
+        return $ FSTvanillaSpec a b
 
--- | A parser to parse F4Stats
-f4SpecParser :: P.Parser FStatSpec
-f4SpecParser = do
-    _ <- P.string "F4"
-    [a, b, c, d] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 4)
-    return $ F4Spec a b c d
-
-
-f3SpecParser :: P.Parser FStatSpec
-f3SpecParser = do
-    _ <- P.string "F3"
-    [a, b, c] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 3)
-    return $ F3Spec a b c
-
-f2SpecParser :: P.Parser FStatSpec
-f2SpecParser = do
-    _ <- P.string "F2"
-    [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-    return $ F2Spec a b
-
-pwmSpecParser :: P.Parser FStatSpec
-pwmSpecParser = do
-    _ <- P.string "PWM"
-    [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-    return $ PWMspec a b
 
 buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
 buildStatSpecsFold indInfo fStatSpecs =
@@ -129,10 +150,14 @@ buildStatSpecsFold indInfo fStatSpecs =
         fStats = do
             fStatSpec <- fStatSpecs
             case fStatSpec of
-                F4Spec  a b c d -> return $ F4  (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
-                F3Spec  a b c   -> return $ F3  (getI [a] i) (getI [b] i) (getI [c] i)
-                F2Spec  a b     -> return $ F2  (getI [a] i) (getI [b] i)
-                PWMspec a b     -> return $ PWM (getI [a] i) (getI [b] i)
+                F4Spec         a b c d -> return $ F4         (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
+                F3Spec         a b c   -> return $ F3         (getI [a] i) (getI [b] i) (getI [c] i)
+                F2Spec         a b     -> return $ F2         (getI [a] i) (getI [b] i)
+                PWMspec        a b     -> return $ PWM        (getI [a] i) (getI [b] i)
+                FSTspec        a b     -> return $ FST        (getI [a] i) (getI [b] i)
+                F3vanillaSpec  a b c   -> return $ F3vanilla  (getI [a] i) (getI [b] i) (getI [c] i)
+                F2vanillaSpec  a b     -> return $ F2vanilla  (getI [a] i) (getI [b] i)
+                FSTvanillaSpec a b     -> return $ FST        (getI [a] i) (getI [b] i)
     in  FoldM (step fStats) initialize extract
   where
     step :: (MonadIO m) => [FStat] -> (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) ->
@@ -164,16 +189,42 @@ buildStatSpecsFold indInfo fStatSpecs =
         return $ BlockData startPos endPos count statVals
 
 computeFStat :: FStat -> GenoLine -> Maybe Double
-computeFStat fStat gL = case fStat of
-    (F4  aI bI cI dI) -> computeF4  <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI <*> computeAlleleFreq gL cI <*> computeAlleleFreq gL dI
-    (F3  aI bI cI   ) -> computeF3  <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI <*> computeAlleleFreq gL cI
-    (F2  aI bI      ) -> computeF2  <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI
-    (PWM aI bI      ) -> computePWM <$> computeAlleleFreq gL aI <*> computeAlleleFreq gL bI
+computeFStat fStat gL =
+    let caf = computeAlleleFreq
+        cac = computeAlleleCount
+    in  case fStat of
+            F4         aI bI cI dI -> computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
+            F3vanilla  aI bI cI    -> computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
+            F2vanilla  aI bI       -> computeF2vanilla  <$> caf gL aI <*> caf gL bI
+            FSTvanilla aI bI       -> computeFSTvanilla <$> caf gL aI <*> caf gL bI
+            PWM        aI bI       -> computePWM        <$> caf gL aI <*> caf gL bI
+            F3         aI bI cI    -> computeF3         <$> caf gL aI <*> caf gL bI <*> pure (cac gL cI)
+            F2         aI bI       -> return $ computeF2  (cac gL aI) (cac gL bI)
+            FST        aI bI       -> return $ computeFST (cac gL aI) (cac gL bI)
   where
-    computeF4  a b c d = (a - b) * (c - d)
-    computeF3  a b c   = (c - a) * (c - b)
-    computeF2  a b     = (a - b) * (a - b)
-    computePWM a b     = a * (1.0 - b) + (1.0 - a) * b
+    -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
+    computeF4         a b c d = (a - b) * (c - d)
+    computeF3vanilla  a b c   = (c - a) * (c - b)
+    computeF2vanilla  a b     = (a - b) * (a - b)
+    computeFSTvanilla a b     = (a - b)^2 / (a * (1 - b) + b * (1 - a))
+    computePWM        a b     = a * (1.0 - b) + (1.0 - a) * b
+    computeF3 a b (nc, sc) =
+        let c = x nc sc
+            corrFac = h nc sc / fromIntegral sc
+        in  computeF3vanilla a b c - corrFac
+    computeF2 (na, sa) (nb, sb) =
+        let a = x na sa
+            b = x nb sb
+            corrFac = h na sa / fromIntegral sa + h nb sb / fromIntegral sb
+        in  computeF2vanilla a b - corrFac
+    computeFST (na, sa) (nb, sb) =
+        let a = x na sa
+            b = x nb sb
+            num = computeF2 (na, sa) (nb, sb)
+            denom = computeF2 (na, sa) (nb, sb) + h na sa + h nb sb
+        in  num / denom
+    x na sa = fromIntegral na / fromIntegral sa
+    h na sa = fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
@@ -265,8 +316,12 @@ collectStatSpecGroups :: [FStatSpec] -> [PoseidonEntity]
 collectStatSpecGroups statSpecs = nub . concat $ do
     stat <- statSpecs
     case stat of
-        F4Spec  a b c d -> return [a, b, c, d]
-        F3Spec  a b c   -> return [a, b, c]
-        F2Spec  a b     -> return [a, b]
-        PWMspec a b     -> return [a, b]
+        F4Spec         a b c d -> return [a, b, c, d]
+        F3Spec         a b c   -> return [a, b, c]
+        F2Spec         a b     -> return [a, b]
+        PWMspec        a b     -> return [a, b]
+        FSTspec        a b     -> return [a, b]
+        F3vanillaSpec  a b c   -> return [a, b, c]
+        F2vanillaSpec  a b     -> return [a, b]
+        FSTvanillaSpec a b     -> return [a, b]
 
