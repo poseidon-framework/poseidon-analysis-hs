@@ -200,17 +200,19 @@ buildStatSpecsFold indInfo fStatSpecs =
 computeFStat :: FStat -> GenoLine -> Maybe Double
 computeFStat fStat gL =
     let caf = computeAlleleFreq
-        cac = computeAlleleCount
+        cac gL i = case computeAlleleCount gL i of
+            (_, 0) -> Nothing
+            x -> Just x
     in  case fStat of
             F4         aI bI cI dI -> computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
             F3vanilla  aI bI cI    -> computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
             F2vanilla  aI bI       -> computeF2vanilla  <$> caf gL aI <*> caf gL bI
             FSTvanilla aI bI       -> computeFSTvanilla <$> caf gL aI <*> caf gL bI
             PWM        aI bI       -> computePWM        <$> caf gL aI <*> caf gL bI
-            F3         aI bI cI    -> computeF3         <$> caf gL aI <*> caf gL bI <*> pure (cac gL cI)
-            Het        aI          -> return $ computeHet (cac gL aI)
-            F2         aI bI       -> return $ computeF2  (cac gL aI) (cac gL bI)
-            FST        aI bI       -> return $ computeFST (cac gL aI) (cac gL bI)
+            F3         aI bI cI    -> computeF3         <$> caf gL aI <*> caf gL bI <*> cac gL cI
+            Het        aI          -> computeHet        <$> cac gL aI
+            F2         aI bI       -> computeF2         <$> cac gL aI <*> cac gL bI
+            FST        aI bI       -> computeFST        (cac gL aI) (cac gL bI)
   where
     -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
     computeF4         a b c d = (a - b) * (c - d)
@@ -228,10 +230,12 @@ computeFStat fStat gL =
             b = computeFreq nb sb
             corrFac = 0.5 * computeHet (na, sa) / fromIntegral sa + 0.5 * computeHet (nb, sb) / fromIntegral sb
         in  computeF2vanilla a b - corrFac
-    computeFST (na, sa) (nb, sb) =
-        let num = computeF2 (na, sa) (nb, sb)
-            denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
-        in  num / denom
+    computeFST maybeNaSa maybeNbSb = case (maybeNaSa, maybeNbSb) of
+        (Just (na, sa), Just (nb, sb)) ->
+            let num = computeF2 (na, sa) (nb, sb)
+                denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
+            in  if denom > 0 then Just (num / denom) else Nothing
+        _ -> Nothing
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
 pacReadOpts :: PackageReadOptions
@@ -337,8 +341,8 @@ processBlocks statSpecs stats blocks = do
                     j <- [0..(length block_weights - 1)]
                     let weight_norm = sum [m | (k, m) <- zip [0..] block_weights, k /= j]
                         num = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights numerator_values, k /= j]
-                        -- denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
-                    return $ num / denom_full
+                        denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
+                    return $ num / denom
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
         _ -> 
             let values = map ((!!i) . blockStatVal) blocks

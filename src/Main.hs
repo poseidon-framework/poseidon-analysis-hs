@@ -116,7 +116,7 @@ parseStatSpecsDirect = OP.option (OP.eitherReader readStatSpecString) (OP.long "
         \Group names are by default matched with group  names as indicated in the Janno-, PLINK- or Eigenstrat files \
         \in the Poseidon dataset. You can also specify individual names using the syntax \"<Ind_name>\", so \
         \enclosing them in angular brackets. You can also mix groups and individuals, like in \
-        \\"F4(<Ind1>,Group2,Group3,<Ind4>)\. Group or individual names are separated by commas, and a comma \
+        \\"F4(<Ind1>,Group2,Group3,<Ind4>)\". Group or individual names are separated by commas, and a comma \
         \can be followed by any number of spaces, as in some of the examples in this help text.")
 
 parseStatSpecsFromFile :: OP.Parser (Maybe FilePath)
