@@ -330,16 +330,15 @@ processBlocks statSpecs stats blocks = do
                 numerator_values = map ((!!i) . blockStatVal) blocks
                 denominator_values = map ((!!relatedHetIndex) . blockStatVal) blocks
                 block_weights = map (fromIntegral . blockSiteCount) blocks
-                full_estimate =
-                    let num = sum [m * v / sum block_weights | (m, v) <- zip block_weights numerator_values]
-                        denom = sum [m * v / sum block_weights | (m, v) <- zip block_weights denominator_values]
-                    in  num / denom
+                num_full = sum [m * v / sum block_weights | (m, v) <- zip block_weights numerator_values]
+                denom_full = sum [m * v / sum block_weights | (m, v) <- zip block_weights denominator_values]
+                full_estimate = num_full / denom_full
                 partial_estimates = do
                     j <- [0..(length block_weights - 1)]
                     let weight_norm = sum [m | (k, m) <- zip [0..] block_weights, k /= j]
                         num = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights numerator_values, k /= j]
-                        denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
-                    return $ num / denom
+                        -- denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
+                    return $ num / denom_full
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
         _ -> 
             let values = map ((!!i) . blockStatVal) blocks
