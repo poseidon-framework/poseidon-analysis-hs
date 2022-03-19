@@ -79,7 +79,6 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseStatSpecsFromFile
                                 <*> parseRawOutput
                                 <*> parseMaxSnps
-                                <*> parseFullTable
 
 parseBasePaths :: OP.Parser [FilePath]
 parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>

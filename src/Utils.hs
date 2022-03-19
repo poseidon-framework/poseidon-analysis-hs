@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq, computeAlleleCount,
-computeJackknifeAdditive, P.runParser, PopConfig(..), GroupDef, XerxesException(..)) where
+computeJackknifeAdditive, computeJackknifeOriginal, P.runParser, PopConfig(..), GroupDef, XerxesException(..)) where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
@@ -16,7 +16,6 @@ import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 
 import           Data.Text                  (Text)
-import           Data.Vector                ((!))
 import           Poseidon.EntitiesList      (EntitiesList, PoseidonEntity (..),
                                              SignedEntitiesList, entitiesListP,
                                              entitySpecParser)
@@ -76,15 +75,14 @@ computeAlleleFreq line indices =
 -- ^ This is the original Delete-mj Jackknife based on Busing et al. 1999. The notation is the same.
 -- theta_n is the full estimate. m_j is the weights of block j. theta_j is the
 -- estimate based on the j'th block removed.
-computeJackknifeOriginal :: Double -> [Int] -> [Double] -> (Double, Double)
-computeJackknifeOriginal theta_n m_j_list_Int theta_j_list =
-    let g               = fromIntegral (length m_j_list_Int)
-        m_j_list        = map fromIntegral m_j_list_Int
+computeJackknifeOriginal :: Double -> [Double] -> [Double] -> (Double, Double)
+computeJackknifeOriginal theta_n m_j_list theta_j_list =
+    let g               = fromIntegral (length m_j_list)
         n               = sum m_j_list
         theta_Jackknife = g * theta_n - sum [(1.0 - m_j / n) * theta_j | (m_j, theta_j) <- zip m_j_list theta_j_list]
         h_j_list        = [n / m_j | m_j <- m_j_list]
         pseudo_values   = [h_j * theta_n  - (h_j - 1.0) * theta_j | (h_j, theta_j) <- zip h_j_list theta_j_list]
-        sigma_square    = 1.0 / g * sum [1.0 / (h_j - 1.0) * (pseudo_value - theta_Jackknife) ^ 2 | (h_j, pseudo_value) <- zip h_j_list pseudo_values]
+        sigma_square    = 1.0 / g * sum [1.0 / (h_j - 1.0) * (pseudo_value - theta_Jackknife) ^ (2 :: Int) | (h_j, pseudo_value) <- zip h_j_list pseudo_values]
     in  (theta_Jackknife, sqrt sigma_square)
 
 -- ^ A simplified Jackknife formula based on an additive estimate, in which the full estimate equals the Jackknife estimate

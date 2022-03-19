@@ -10,19 +10,18 @@ module FStats (
 
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq, computeAlleleCount,
-                                              computeJackknifeAdditive, popSpecsNparser)
+                                              computeJackknifeOriginal, popSpecsNparser)
 
 import           Control.Applicative         ((<|>))
 import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
 import           Control.Monad               (forM_)
-import           Control.Monad.Catch         (throwM)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import           Data.List                   (intercalate, nub, transpose)
+import           Data.List                   (intercalate, nub, elemIndex)
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
-import           Debug.Trace                 (trace)
+-- import           Debug.Trace                 (trace)
 import           Lens.Family2                (view)
 import           Pipes                       (cat, (>->))
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
@@ -62,7 +61,6 @@ data FstatsOptions = FstatsOptions
     -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     , _foRawOutput       :: Bool -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     , _foMaxSnps         :: Maybe Int
-    , _foFullTable         :: Bool
     }
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
@@ -97,7 +95,7 @@ data FStat = F4         [Int] [Int] [Int] [Int]
            | FST        [Int] [Int]
            | F3vanilla  [Int] [Int] [Int]
            | F2vanilla  [Int] [Int]
-           | FSTvanilla [Int] [Int] deriving (Show)
+           | FSTvanilla [Int] [Int] deriving (Show, Eq)
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
@@ -150,11 +148,11 @@ fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecPars
         [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
         return $ FSTvanillaSpec a b
 
-buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
+buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> ([FStat], FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs =
     let getI = conformingEntityIndices
         i = indInfo
-        fStats = do
+        fStatsBasic = do
             fStatSpec <- fStatSpecs
             case fStatSpec of
                 F4Spec         a b c d -> return $ F4         (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
@@ -166,7 +164,10 @@ buildStatSpecsFold indInfo fStatSpecs =
                 F3vanillaSpec  a b c   -> return $ F3vanilla  (getI [a] i) (getI [b] i) (getI [c] i)
                 F2vanillaSpec  a b     -> return $ F2vanilla  (getI [a] i) (getI [b] i)
                 FSTvanillaSpec a b     -> return $ FST        (getI [a] i) (getI [b] i)
-    in  FoldM (step fStats) initialize extract
+        additionalHetStats = [Het cI | F3 _ _ cI <- fStatsBasic]
+        fStatsAll = fStatsBasic ++ additionalHetStats
+        n = length fStatsAll
+    in  (fStatsAll, FoldM (step fStatsAll) (initialize n) extract)
   where
     step :: (MonadIO m) => [FStat] -> (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) ->
         (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
@@ -182,10 +183,10 @@ buildStatSpecsFold indInfo fStatSpecs =
                     liftIO $ VUM.modify valVec (+v) i
                 Nothing -> return ()
         return (newStartPos, newEndPos, count + 1, normVec, valVec)
-    initialize :: (MonadIO m) => m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
-    initialize = do
-        normVec <- liftIO $ VUM.replicate (length fStatSpecs) 0
-        valVec <- liftIO $ VUM.replicate (length fStatSpecs) 0.0
+    initialize :: (MonadIO m) => Int -> m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
+    initialize n = do
+        normVec <- liftIO $ VUM.replicate n 0
+        valVec <- liftIO $ VUM.replicate n 0.0
         return (Nothing, Nothing, 0, normVec, valVec)
     extract :: (MonadIO m) => (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) -> m BlockData
     extract (maybeStartPos, maybeEndPos, count, normVec, valVec) = do
@@ -215,23 +216,21 @@ computeFStat fStat gL =
     computeF4         a b c d = (a - b) * (c - d)
     computeF3vanilla  a b c   = (c - a) * (c - b)
     computeF2vanilla  a b     = (a - b) * (a - b)
-    computeFSTvanilla a b     = (a - b)^2 / (a * (1 - b) + b * (1 - a))
+    computeFSTvanilla a b     = (a - b)^(2 :: Int) / (a * (1 - b) + b * (1 - a))
     computePWM        a b     = a * (1.0 - b) + (1.0 - a) * b
-    computeHet (na, sa) = fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
+    computeHet (na, sa) = 2.0 * fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
     computeF3 a b (nc, sc) =
         let c = computeFreq nc sc
-            corrFac = computeHet (nc, sc) / fromIntegral sc
+            corrFac = 0.5 * computeHet (nc, sc) / fromIntegral sc
         in  computeF3vanilla a b c - corrFac
     computeF2 (na, sa) (nb, sb) =
         let a = computeFreq na sa
             b = computeFreq nb sb
-            corrFac = computeHet (na, sa) / fromIntegral sa + computeHet (nb, sb) / fromIntegral sb
+            corrFac = 0.5 * computeHet (na, sa) / fromIntegral sa + 0.5 * computeHet (nb, sb) / fromIntegral sb
         in  computeF2vanilla a b - corrFac
     computeFST (na, sa) (nb, sb) =
-        let a = computeFreq na sa
-            b = computeFreq nb sb
-            num = computeF2 (na, sa) (nb, sb)
-            denom = computeF2 (na, sa) (nb, sb) + computeHet (na, sa) + computeHet (nb, sb)
+        let num = computeF2 (na, sa) (nb, sb)
+            denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
         in  num / denom
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
@@ -266,7 +265,7 @@ runFstats opts = do
             forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
             hPutStrLn stderr $ "Computing stats " ++ show statSpecs
             let jointIndInfo = getJointIndividualInfo relevantPackages
-            let statsFold = buildStatSpecsFold jointIndInfo statSpecs
+            let (fStats, statsFold) = buildStatSpecsFold jointIndInfo statSpecs
             blocks <- runSafeT $ do
                 (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
                 let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
@@ -275,28 +274,12 @@ runFstats opts = do
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
                 let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
                 purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-            let jackknifeWeights = map blockSiteCount blocks
-            let jackknifeEstimates = do
-                    (i, _) <- zip [0..] statSpecs
-                    return $ computeJackknifeAdditive jackknifeWeights (map ((!!i) . blockStatVal) blocks)
-            let (colSpecs, tableH, tableB) =
-                    if _foFullTable opts then
-                        let c = replicate 5 (column expand def def def)
-                            tH = ["Block", "Statistic", "Estimate", "StdErr", "Z score"]
-                            tB = concat $ do
-                                (i, fstat, result) <- zip3 [0..] statSpecs jackknifeEstimates
-                                let perStat = do
-                                        (j, block) <- zip [0..] blocks
-                                        return [show j, show fstat, show (blockStatVal block !! i), "n/a", "n/a"]
-                                return $ perStat ++ [["Full", show fstat, show (fst result), show (snd result), show (uncurry (/) result)]]
-                        in  (c, tH, tB)
-                    else 
-                        let c = replicate 4 (column expand def def def)
-                            tH = ["Statistic", "Estimate", "StdErr", "Z score"]
-                            tB = do
-                                (fstat, result) <- zip statSpecs jackknifeEstimates
-                                return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
-                        in  (c, tH, tB)
+            let jackknifeEstimates = processBlocks statSpecs fStats blocks
+            let colSpecs = replicate 4 (column expand def def def)
+                tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
+                tableB = do
+                    (fstat, result) <- zip statSpecs jackknifeEstimates
+                    return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
             if   _foRawOutput opts
             then do
                 putStrLn $ intercalate "\t" tableH
@@ -335,3 +318,37 @@ collectStatSpecGroups statSpecs = nub . concat $ do
         F2vanillaSpec  a b     -> return [a, b]
         FSTvanillaSpec a b     -> return [a, b]
 
+processBlocks :: [FStatSpec] -> [FStat] -> [BlockData] -> [(Double, Double)]
+processBlocks statSpecs stats blocks = do
+    (i, statSpec, stat) <- zip3 [0..] statSpecs stats
+    case statSpec of
+        F3Spec {} -> 
+            let F3 _ _ cI = stat
+                relatedHetIndex = case elemIndex (Het cI) stats of
+                    Nothing -> error "should never happen, cannot find related het-statistics for F3 stat"
+                    Just j -> j
+                numerator_values = map ((!!i) . blockStatVal) blocks
+                denominator_values = map ((!!relatedHetIndex) . blockStatVal) blocks
+                block_weights = map (fromIntegral . blockSiteCount) blocks
+                full_estimate =
+                    let num = sum [m * v / sum block_weights | (m, v) <- zip block_weights numerator_values]
+                        denom = sum [m * v / sum block_weights | (m, v) <- zip block_weights denominator_values]
+                    in  num / denom
+                partial_estimates = do
+                    j <- [0..(length block_weights - 1)]
+                    let weight_norm = sum [m | (k, m) <- zip [0..] block_weights, k /= j]
+                        num = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights numerator_values, k /= j]
+                        denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
+                    return $ num / denom
+            in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
+        _ -> 
+            let values = map ((!!i) . blockStatVal) blocks
+                block_weights = map (fromIntegral . blockSiteCount) blocks
+                full_estimate = sum [m * v / sum block_weights | (m, v) <- zip block_weights values]
+                partial_estimates = do
+                    j <- [0..(length block_weights - 1)]
+                    let weight_norm = sum [m | (k, m) <- zip [0..] block_weights, k /= j]
+                    return $ sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights values, k /= j]
+            in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates             
+                
+                

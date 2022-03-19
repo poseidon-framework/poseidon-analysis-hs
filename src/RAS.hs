@@ -42,7 +42,7 @@ import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom (..))
 import           System.IO                   (IOMode (..), hPutStrLn, stderr,
-                                              withFile, hPrint)
+                                              withFile)
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
 
