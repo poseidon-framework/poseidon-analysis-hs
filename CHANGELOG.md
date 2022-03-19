@@ -1,3 +1,4 @@
+- 0.0.1.0: Major optimization of Fstats, added lots of new statistics, space leak fixed. Normalization of F3-statistics now similar to ADMIXTOOLS.
 - 0.0.0.4: Fixed Bug with parsing F-Statistics
 - 0.0.0.2: Bug fix with indexing in RAS. Added output of normalisation count to output table.
 - 0.0.0.1: Initial commit. Copied the fstats command from poseidon-hs.
