@@ -10,7 +10,7 @@ module FStats (
 
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq, computeAlleleCount,
-                                              computeJackknife, popSpecsNparser)
+                                              computeJackknifeAdditive, popSpecsNparser)
 
 import           Control.Applicative         ((<|>))
 import           Control.Exception           (throwIO)
@@ -70,6 +70,7 @@ data FStatSpec = F4Spec PoseidonEntity PoseidonEntity PoseidonEntity PoseidonEnt
     | F3Spec PoseidonEntity PoseidonEntity PoseidonEntity
     | F2Spec PoseidonEntity PoseidonEntity
     | PWMspec PoseidonEntity PoseidonEntity
+    | HetSpec PoseidonEntity
     | FSTspec PoseidonEntity PoseidonEntity
     | F3vanillaSpec PoseidonEntity PoseidonEntity PoseidonEntity
     | F2vanillaSpec PoseidonEntity PoseidonEntity
@@ -81,6 +82,7 @@ instance Show FStatSpec where
     show (F3Spec         a b c  ) = "F3("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
     show (F2Spec         a b    ) = "F2("  ++ show a ++ "," ++ show b ++ ")"
     show (PWMspec        a b    ) = "PWM(" ++ show a ++ "," ++ show b ++ ")"
+    show (HetSpec        a      ) = "Het(" ++ show a ++ ")"
     show (FSTspec        a b    ) = "FST(" ++ show a ++ "," ++ show b ++ ")"
     show (F3vanillaSpec  a b c  ) = "F3vanilla("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
     show (F2vanillaSpec  a b    ) = "F2vanilla("  ++ show a ++ "," ++ show b ++ ")"
@@ -91,6 +93,7 @@ data FStat = F4         [Int] [Int] [Int] [Int]
            | F3         [Int] [Int] [Int]
            | F2         [Int] [Int]
            | PWM        [Int] [Int]
+           | Het        [Int]
            | FST        [Int] [Int]
            | F3vanilla  [Int] [Int] [Int]
            | F2vanilla  [Int] [Int]
@@ -107,6 +110,7 @@ data BlockData = BlockData
 -- | A parser to parse Summary Statistic specifications.
 fStatSpecParser :: P.Parser FStatSpec
 fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecParser <|> P.try pwmSpecParser <|>
+    P.try hetSpecParser <|> 
     P.try fstSpecParser <|> P.try f3VanillaSpecParser <|> P.try f2VanillaSpecParser <|> fstVanillaSpecParser
   where
     f4SpecParser = do
@@ -125,6 +129,10 @@ fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecPars
         _ <- P.string "PWM"
         [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
         return $ PWMspec a b
+    hetSpecParser = do
+        _ <- P.string "Het"
+        [a] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 1)
+        return $ HetSpec a
     fstSpecParser = do
         _ <- P.string "FST"
         [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
@@ -142,7 +150,6 @@ fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecPars
         [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
         return $ FSTvanillaSpec a b
 
-
 buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
 buildStatSpecsFold indInfo fStatSpecs =
     let getI = conformingEntityIndices
@@ -154,6 +161,7 @@ buildStatSpecsFold indInfo fStatSpecs =
                 F3Spec         a b c   -> return $ F3         (getI [a] i) (getI [b] i) (getI [c] i)
                 F2Spec         a b     -> return $ F2         (getI [a] i) (getI [b] i)
                 PWMspec        a b     -> return $ PWM        (getI [a] i) (getI [b] i)
+                HetSpec        a       -> return $ Het        (getI [a] i)
                 FSTspec        a b     -> return $ FST        (getI [a] i) (getI [b] i)
                 F3vanillaSpec  a b c   -> return $ F3vanilla  (getI [a] i) (getI [b] i) (getI [c] i)
                 F2vanillaSpec  a b     -> return $ F2vanilla  (getI [a] i) (getI [b] i)
@@ -199,6 +207,7 @@ computeFStat fStat gL =
             FSTvanilla aI bI       -> computeFSTvanilla <$> caf gL aI <*> caf gL bI
             PWM        aI bI       -> computePWM        <$> caf gL aI <*> caf gL bI
             F3         aI bI cI    -> computeF3         <$> caf gL aI <*> caf gL bI <*> pure (cac gL cI)
+            Het        aI          -> return $ computeHet (cac gL aI)
             F2         aI bI       -> return $ computeF2  (cac gL aI) (cac gL bI)
             FST        aI bI       -> return $ computeFST (cac gL aI) (cac gL bI)
   where
@@ -208,23 +217,23 @@ computeFStat fStat gL =
     computeF2vanilla  a b     = (a - b) * (a - b)
     computeFSTvanilla a b     = (a - b)^2 / (a * (1 - b) + b * (1 - a))
     computePWM        a b     = a * (1.0 - b) + (1.0 - a) * b
+    computeHet (na, sa) = fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
     computeF3 a b (nc, sc) =
-        let c = x nc sc
-            corrFac = h nc sc / fromIntegral sc
+        let c = computeFreq nc sc
+            corrFac = computeHet (nc, sc) / fromIntegral sc
         in  computeF3vanilla a b c - corrFac
     computeF2 (na, sa) (nb, sb) =
-        let a = x na sa
-            b = x nb sb
-            corrFac = h na sa / fromIntegral sa + h nb sb / fromIntegral sb
+        let a = computeFreq na sa
+            b = computeFreq nb sb
+            corrFac = computeHet (na, sa) / fromIntegral sa + computeHet (nb, sb) / fromIntegral sb
         in  computeF2vanilla a b - corrFac
     computeFST (na, sa) (nb, sb) =
-        let a = x na sa
-            b = x nb sb
+        let a = computeFreq na sa
+            b = computeFreq nb sb
             num = computeF2 (na, sa) (nb, sb)
-            denom = computeF2 (na, sa) (nb, sb) + h na sa + h nb sb
+            denom = computeF2 (na, sa) (nb, sb) + computeHet (na, sa) + computeHet (nb, sb)
         in  num / denom
-    x na sa = fromIntegral na / fromIntegral sa
-    h na sa = fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
+    computeFreq na sa = fromIntegral na / fromIntegral sa
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
@@ -269,7 +278,7 @@ runFstats opts = do
             let jackknifeWeights = map blockSiteCount blocks
             let jackknifeEstimates = do
                     (i, _) <- zip [0..] statSpecs
-                    return $ computeJackknife jackknifeWeights (map ((!!i) . blockStatVal) blocks)
+                    return $ computeJackknifeAdditive jackknifeWeights (map ((!!i) . blockStatVal) blocks)
             let (colSpecs, tableH, tableB) =
                     if _foFullTable opts then
                         let c = replicate 5 (column expand def def def)
@@ -320,6 +329,7 @@ collectStatSpecGroups statSpecs = nub . concat $ do
         F3Spec         a b c   -> return [a, b, c]
         F2Spec         a b     -> return [a, b]
         PWMspec        a b     -> return [a, b]
+        HetSpec        a       -> return [a]
         FSTspec        a b     -> return [a, b]
         F3vanillaSpec  a b c   -> return [a, b, c]
         F2vanillaSpec  a b     -> return [a, b]

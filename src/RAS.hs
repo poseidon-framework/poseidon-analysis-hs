@@ -4,7 +4,7 @@ module RAS where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq, computeAlleleCount,
-                                              computeJackknife, PopConfig(..), GroupDef, XerxesException(..))
+                                              computeJackknifeAdditive, PopConfig(..), GroupDef, XerxesException(..))
 
 import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
@@ -125,7 +125,7 @@ runRAS rasOpts = do
                             [sum [((blockVals bd !! k') !! i) !! j | k' <- [0 .. k]] | bd <- blockData]
                         else
                             [((blockVals bd !! k) !! i) !! j | bd <- blockData]
-                let (val, err) = computeJackknife counts vals
+                let (val, err) = computeJackknifeAdditive counts vals
                 return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
         let colSpecs = replicate 7 (column expand def def def)
         putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
