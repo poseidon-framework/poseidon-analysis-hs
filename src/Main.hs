@@ -107,13 +107,16 @@ parseExcludeChroms = OP.option (map Chrom . splitWith (==',') . pack <$> OP.str)
 
 parseStatSpecsDirect :: OP.Parser FStatSpec
 parseStatSpecsDirect = OP.option (OP.eitherReader readStatSpecString) (OP.long "stat" <>
-    OP.help "Specify a summary statistic to be computed. Can be given multiple times. \
-        \Possible options are: F4(name1, name2, name3, name4), and similarly F3 and F2 stats, \
-        \as well as PWM(name1,name2) for pairwise mismatch rates. Group names are by default \
-        \matched with group names as indicated in the PLINK or Eigenstrat files in the Poseidon dataset. \
-        \You can also specify individual names using the syntax \"<Ind_name>\", so enclosing them \
-        \in angular brackets. You can also mix groups and individuals, like in \
-        \\"F4(<Ind1>,Group2,Group3,<Ind4>)\". Group or individual names are separated by commas, and a comma \
+    OP.help "Specify a summary statistic to be computed. Can be given multiple times. Possible options are: F4(name1, \
+        \name2, name3, name4), and similarly F3 and F2 stats, as well as PWM(name1,name2) for pairwise mismatch \
+        \rates. You can also compute FST statistics between groups (FST(a, b)) and \
+        \Heterogygosity estimates (Het(a)), which are not that useful but are used \
+        \ internally within the F3 statistic. For F2 and F3 statistic, there also \
+        \exist \"Vanilla\" versions without bias correction, called F2vanilla and F3vanilla. \
+        \Group names are by default matched with group  names as indicated in the Janno-, PLINK- or Eigenstrat files \
+        \in the Poseidon dataset. You can also specify individual names using the syntax \"<Ind_name>\", so \
+        \enclosing them in angular brackets. You can also mix groups and individuals, like in \
+        \\"F4(<Ind1>,Group2,Group3,<Ind4>)\. Group or individual names are separated by commas, and a comma \
         \can be followed by any number of spaces, as in some of the examples in this help text.")
 
 parseStatSpecsFromFile :: OP.Parser (Maybe FilePath)
