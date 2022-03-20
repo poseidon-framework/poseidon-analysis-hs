@@ -54,7 +54,7 @@ data RASOptions = RASOptions
     , _optMaxCutoff      :: Maybe Int
     , _optMaxMissingness :: Double
     , _optFullTable      :: Bool
-    , _optTableOutFile   :: FilePath
+    , _optTableOutFile   :: Maybe FilePath
     , _optMaxSnps        :: Maybe Int
     }
     deriving (Show)
@@ -129,10 +129,12 @@ runRAS rasOpts = do
                 return [show popLeft, show popRight, show (k + 2), show cumul, show (sum counts), show val, show err]
         let colSpecs = replicate 7 (column expand def def def)
         putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
-        withFile (_optTableOutFile rasOpts) WriteMode $ \h -> do
-            hPutStrLn h $ intercalate "\t" tableH
-            forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
-        return ()
+        case _optTableOutFile rasOpts of
+            Nothing -> return ()
+            Just outFn -> do
+                withFile outFn WriteMode $ \h -> do
+                    hPutStrLn h $ intercalate "\t" tableH
+                    forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
   where
     chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
     capNrSnps Nothing  = cat

@@ -41,7 +41,7 @@ import           Poseidon.SecondaryTypes     (IndividualInfo (..))
 import           Poseidon.Utils              (PoseidonException (..))
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom)
-import           System.IO                   (hPutStrLn, stderr)
+import           System.IO                   (hPutStrLn, stderr, withFile, IOMode(..))
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
@@ -59,8 +59,8 @@ data FstatsOptions = FstatsOptions
     -- ^ a file listing F-statistics to compute
     , _foStatSpecsFile   :: Maybe FilePath -- ^ a file listing F-statistics to compute
     -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
-    , _foRawOutput       :: Bool -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
     , _foMaxSnps         :: Maybe Int
+    , _foTableOut        :: Maybe FilePath
     }
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
@@ -200,7 +200,7 @@ buildStatSpecsFold indInfo fStatSpecs =
 computeFStat :: FStat -> GenoLine -> Maybe Double
 computeFStat fStat gL =
     let caf = computeAlleleFreq
-        cac gL i = case computeAlleleCount gL i of
+        cac gL' i = case computeAlleleCount gL' i of
             (_, 0) -> Nothing
             x -> Just x
     in  case fStat of
@@ -284,11 +284,17 @@ runFstats opts = do
                 tableB = do
                     (fstat, result) <- zip statSpecs jackknifeEstimates
                     return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
-            if   _foRawOutput opts
-            then do
-                putStrLn $ intercalate "\t" tableH
-                forM_ tableB $ \row -> putStrLn (intercalate "\t" row)
-            else putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+            putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+            case _foTableOut opts of
+                Nothing -> return ()
+                Just outFn -> do
+                    withFile outFn WriteMode $ \h -> do
+                        hPutStrLn h . intercalate "\t" $ ["Statistic", "a", "b", "c", "d", "Estimate", "StdErr", "Z score"]
+                        forM_ (zip statSpecs jackknifeEstimates) $ \(fstat, result) -> do
+                            let abcd = collectStatSpecGroups [fstat]
+                            hPutStrLn h . intercalate "\t" $ [show fstat] ++ map show abcd ++ [show (fst result), show (snd result), show (uncurry (/) result)]
+                        
+
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat

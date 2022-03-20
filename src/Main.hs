@@ -77,8 +77,8 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseExcludeChroms
                                 <*> OP.many parseStatSpecsDirect
                                 <*> parseStatSpecsFromFile
-                                <*> parseRawOutput
                                 <*> parseMaxSnps
+                                <*> parseTableOutFile
 
 parseBasePaths :: OP.Parser [FilePath]
 parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>
@@ -107,17 +107,14 @@ parseExcludeChroms = OP.option (map Chrom . splitWith (==',') . pack <$> OP.str)
 
 parseStatSpecsDirect :: OP.Parser FStatSpec
 parseStatSpecsDirect = OP.option (OP.eitherReader readStatSpecString) (OP.long "stat" <>
-    OP.help "Specify a summary statistic to be computed. Can be given multiple times. Possible options are: F4(name1, \
-        \name2, name3, name4), and similarly F3 and F2 stats, as well as PWM(name1,name2) for pairwise mismatch \
-        \rates. You can also compute FST statistics between groups (FST(a, b)) and \
-        \Heterogygosity estimates (Het(a)), which are not that useful but are used \
-        \ internally within the F3 statistic. For F2 and F3 statistic, there also \
-        \exist \"Vanilla\" versions without bias correction, called F2vanilla and F3vanilla. \
-        \Group names are by default matched with group  names as indicated in the Janno-, PLINK- or Eigenstrat files \
-        \in the Poseidon dataset. You can also specify individual names using the syntax \"<Ind_name>\", so \
-        \enclosing them in angular brackets. You can also mix groups and individuals, like in \
-        \\"F4(<Ind1>,Group2,Group3,<Ind4>)\". Group or individual names are separated by commas, and a comma \
-        \can be followed by any number of spaces, as in some of the examples in this help text.")
+    OP.help "Specify a summary statistic to be computed. Can be given multiple times. Possible options are: F4(a, \
+        \b, c, d), F3(a, b, c), F2(a, b), PWM(a, b), FST(a, b), Het(a) and some more special options \
+        \described at https://poseidon-framework.github.io/#/xerxes?id=fstats-command. Valid entities used in the \
+        \statistics are group names as specified in the *.fam, *.ind or *.janno failes, individual names using the \
+        \syntax \"<Ind_name>\", so enclosing them in angular brackets, and entire packages like \"*Package1*\" using the \
+        \Poseidon package title. You can mix entity types, like in \
+        \\"F4(<Ind1>,Group2,*Pac*,<Ind4>)\". Group or individual names are separated by commas, and a comma \
+        \can be followed by any number of spaces.")
 
 parseStatSpecsFromFile :: OP.Parser (Maybe FilePath)
 parseStatSpecsFromFile = OP.option (Just <$> OP.str) (OP.long "statFile" <> OP.help "Specify a file with F-Statistics specified \
@@ -127,12 +124,6 @@ readStatSpecString :: String -> Either String FStatSpec
 readStatSpecString s = case runParser fStatSpecParser () "" s of
     Left p  -> Left (show p)
     Right x -> Right x
-
-parseRawOutput :: OP.Parser Bool
-parseRawOutput = OP.switch (
-    OP.long "raw" <>
-    OP.help "output table as tsv without header. Useful for piping into grep or awk"
-    )
 
 rasOptParser :: OP.Parser RASOptions
 rasOptParser = RASOptions <$>
@@ -166,11 +157,12 @@ parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm
 parseFullTable :: OP.Parser Bool
 parseFullTable = OP.switch (OP.long "fulltable" <> OP.help "If specified, output a much more complete output table")
 
-parseTableOutFile :: OP.Parser FilePath
-parseTableOutFile = OP.option OP.str (OP.long "tableOutFile" <> OP.short 'f' <>
-    OP.help "the file to which results are written as tab-separated file")
+parseTableOutFile :: OP.Parser (Maybe FilePath)
+parseTableOutFile = OP.option (Just <$> OP.str) (OP.long "tableOutFile" <> OP.short 'f' <>
+    OP.help "a file to which results are written as tab-separated file" <> OP.value Nothing)
 
 parseMaxSnps :: OP.Parser (Maybe Int)
 parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
     OP.help "Stop after a maximum nr of snps has been processed. Useful for short test runs" <>
     OP.value Nothing <> OP.hidden)
+
