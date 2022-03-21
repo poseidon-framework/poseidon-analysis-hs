@@ -2,7 +2,7 @@
 
 import           FStats                     (FStatSpec (..), FstatsOptions (..),
                                              fStatSpecParser, runFstats)
-import           RAS                        (RASOptions (..), runRAS)
+import           RAS                        (RASOptions (..), runRAS, FreqSpec(..))
 import           Utils                      (JackknifeMode (..), runParser)
 
 import           Control.Applicative        ((<|>))
@@ -131,35 +131,48 @@ rasOptParser = RASOptions <$>
     parseJackknife <*>
     parseExcludeChroms <*>
     parsePopConfigFile <*>
-    parseMaxCutoff <*>
+    parseMinFreq <*>
+    parseMaxFreq <*>
     parseMaxMissingness <*>
-    parseFullTable <*>
+    parseBlockTableFile <*>
     parseTableOutFile <*>
     parseMaxSnps
 
 parsePopConfigFile :: OP.Parser FilePath
 parsePopConfigFile = OP.option OP.str (OP.long "popConfigFile" <> OP.help "a file containing the population configuration")
 
-parseMaxCutoff :: OP.Parser (Maybe Int)
-parseMaxCutoff = parseK <|> parseNoCutoff
+parseMaxFreq :: OP.Parser FreqSpec
+parseMaxFreq = parseK <|> parseX <|> parseNone
   where
-    parseK = OP.option (Just <$> OP.auto) (OP.long "maxAlleleCount" <> OP.short 'k' <>
-        OP.help "define a maximal allele-count cutoff for the RAS statistics. " <>
-        OP.value (Just 10) <> OP.showDefault)
-    parseNoCutoff = OP.flag' Nothing (OP.long "noMaxAlleleCount" <>
-        OP.help "switch off the allele count filter. This effectively then mimics Outgroup-F3")
+    parseK = OP.option (FreqK <$> OP.auto) (OP.long "maxAC" <>
+        OP.help "define a maximal allele-count cutoff for the RAS statistics. ")
+    parseX = OP.option (FreqX <$> OP.auto) (OP.long "maxFreq" <>
+        OP.help "define a maximal allele-frequency cutoff for the RAS statistics. ")
+    parseNone = OP.flag' FreqNone (OP.long "noMaxFreq" <>
+        OP.help "switch off the maximum allele frequency filter. This cam help mimic Outgroup-F3")
+
+parseMinFreq :: OP.Parser FreqSpec
+parseMinFreq = parseK <|> parseX <|> parseNone
+  where
+    parseK = OP.option (FreqK <$> OP.auto) (OP.long "minAC" <>
+        OP.help "define a minimal allele-count cutoff for the RAS statistics. ")
+    parseX = OP.option (FreqX <$> OP.auto) (OP.long "minFreq" <>
+        OP.help "define a minimal allele-frequency cutoff for the RAS statistics. ")
+    parseNone = OP.flag' FreqNone (OP.long "noMinFreq" <>
+        OP.help "switch off the minimum allele frequency filter")
 
 parseMaxMissingness :: OP.Parser Double
 parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm' <>
     OP.help "define a maximal missingness for the right populations in the RAS statistics." <>
     OP.value 0.1 <> OP.showDefault)
 
-parseFullTable :: OP.Parser Bool
-parseFullTable = OP.switch (OP.long "fulltable" <> OP.help "If specified, output a much more complete output table")
-
 parseTableOutFile :: OP.Parser (Maybe FilePath)
 parseTableOutFile = OP.option (Just <$> OP.str) (OP.long "tableOutFile" <> OP.short 'f' <>
     OP.help "a file to which results are written as tab-separated file" <> OP.value Nothing)
+
+parseBlockTableFile :: OP.Parser (Maybe FilePath)
+parseBlockTableFile = OP.option (Just <$> OP.str) (OP.long "blockTableFile" <>
+    OP.help "a file to which the per-Block results are written as tab-separated file" <> OP.value Nothing)
 
 parseMaxSnps :: OP.Parser (Maybe Int)
 parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>

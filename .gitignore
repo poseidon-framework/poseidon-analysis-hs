@@ -1,3 +1,5 @@
 *.lock
 .stack-work/
 .Rproj.user
+goldenTests/testRasBlockOut.txt
+goldenTests/testRasOut.txt
