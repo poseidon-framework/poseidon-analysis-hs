@@ -1,3 +1,4 @@
+- 0.1.1.0: Simplified and improved the CLI API for xerxes RAS
 - 0.1.0.0: Decided for first major version number 1, as FStats has received such major upgrades.
 - 0.0.1.1: Slighty modified error calculation with normalized F3.
 - 0.0.1.0: Major optimization of Fstats, added lots of new statistics, space leak fixed. Normalization of F3-statistics now similar to ADMIXTOOLS.
