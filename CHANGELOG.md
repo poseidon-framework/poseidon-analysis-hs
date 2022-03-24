@@ -1,3 +1,4 @@
+- 0.1.1.1: Fixed a bug that caused the outgroup to be ignored in the main loop of RAS.
 - 0.1.1.0: Simplified and improved the CLI API for xerxes RAS
 - 0.1.0.0: Decided for first major version number 1, as FStats has received such major upgrades.
 - 0.0.1.1: Slighty modified error calculation with normalized F3.
