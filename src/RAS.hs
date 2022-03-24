@@ -219,12 +219,16 @@ buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights =
                         -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                         -- main loop
                         let nR = length popRights
-                            leftFreqs = map (computeAlleleFreq genoLine) leftI
+                            leftFreqsNonRef = map (computeAlleleFreq genoLine) leftI
+                            leftFreqs = if oFreq < 0.5 then leftFreqsNonRef else map (fmap (1.0 - )) leftFreqsNonRef
                             rightFreqs = do
                                 r <- rightI
                                 let nrDerived = fst $ computeAlleleCount genoLine r
                                 let n = 2 * length r
-                                return (fromIntegral nrDerived / fromIntegral n)
+                                if oFreq < 0.5 then 
+                                    return (fromIntegral nrDerived / fromIntegral n)
+                                else
+                                    return $ 1.0 - (fromIntegral nrDerived / fromIntegral n)
                             relevantLeftFreqs  = [(i, x) | (i, Just x) <- zip [0..] leftFreqs,  x > 0.0]
                             relevantRightFreqs = [(i, x) | (i,      x) <- zip [0..] rightFreqs, x > 0.0]
                         forM_ relevantLeftFreqs $ \(i, x) ->
