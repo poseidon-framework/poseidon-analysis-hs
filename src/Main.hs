@@ -136,7 +136,8 @@ rasOptParser = RASOptions <$>
     parseMaxMissingness <*>
     parseBlockTableFile <*>
     parseTableOutFile <*>
-    parseMaxSnps
+    parseMaxSnps <*>
+    parseNoTransitions
 
 parsePopConfigFile :: OP.Parser FilePath
 parsePopConfigFile = OP.option OP.str (OP.long "popConfigFile" <> OP.help "a file containing the population configuration")
@@ -179,3 +180,5 @@ parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
     OP.help "Stop after a maximum nr of snps has been processed. Useful for short test runs" <>
     OP.value Nothing <> OP.hidden)
 
+parseNoTransitions :: OP.Parser Bool 
+parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transition SNPs and use only transversions")
