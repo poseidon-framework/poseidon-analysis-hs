@@ -137,7 +137,8 @@ rasOptParser = RASOptions <$>
     parseBlockTableFile <*>
     parseTableOutFile <*>
     parseMaxSnps <*>
-    parseNoTransitions
+    parseNoTransitions <*>
+    parseBedFile
 
 parsePopConfigFile :: OP.Parser FilePath
 parsePopConfigFile = OP.option OP.str (OP.long "popConfigFile" <> OP.help "a file containing the population configuration")
@@ -182,3 +183,7 @@ parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
 
 parseNoTransitions :: OP.Parser Bool 
 parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transition SNPs and use only transversions")
+
+parseBedFile :: OP.Parser (Maybe FilePath)
+parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An optional bed file that gives sites to be \
+    \included in the analysis.")

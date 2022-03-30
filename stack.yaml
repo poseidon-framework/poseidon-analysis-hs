@@ -9,6 +9,8 @@ extra-deps:
     commit: 6e964a04c5225581c50065ac0447b39589a88966
   - table-layout-0.9.1.0
   - data-default-instances-base-0.1.0.1
-  - sequence-formats-1.6.1
+  # - sequence-formats-1.6.1
+  - git: https://github.com/stschiff/sequence-formats
+    commit: b10d25d2f2906002c44fc2540402a3c17cd2a474
   - yaml-pretty-extras-0.0.2.2
   - pipes-ordered-zip-1.2.1

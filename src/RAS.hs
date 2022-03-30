@@ -2,51 +2,64 @@
 
 module RAS where
 
-import           Utils                       (GenomPos, JackknifeMode (..),
-                                              computeAlleleFreq, computeAlleleCount,
-                                              computeJackknifeAdditive, PopConfig(..), GroupDef, XerxesException(..))
+import           Utils                               (GenomPos, GroupDef,
+                                                      JackknifeMode (..),
+                                                      PopConfig (..),
+                                                      XerxesException (..),
+                                                      computeAlleleCount,
+                                                      computeAlleleFreq,
+                                                      computeJackknifeAdditive)
 
-import           Control.Exception           (throwIO)
-import           Control.Foldl               (FoldM (..), impurely, list,
-                                              purely)
-import           Control.Monad               (forM_, unless, when)
-import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import qualified Data.ByteString             as B
-import           Data.List                   (intercalate, nub, (\\))
-import qualified Data.Vector                 as V
-import qualified Data.Vector.Unboxed         as VU
-import qualified Data.Vector.Unboxed.Mutable as VUM
+import           Control.Exception                   (throwIO)
+import           Control.Foldl                       (FoldM (..), impurely,
+                                                      list, purely)
+import           Control.Monad                       (forM_, unless, when)
+import           Control.Monad.IO.Class              (MonadIO, liftIO)
+import qualified Data.ByteString                     as B
+import           Data.List                           (intercalate, nub, (\\))
+import qualified Data.Vector                         as V
+import qualified Data.Vector.Unboxed                 as VU
+import qualified Data.Vector.Unboxed.Mutable         as VUM
 
-import           Data.Yaml                   (decodeEither')
+import           Data.Yaml                           (decodeEither')
 -- import           Debug.Trace                 (trace)
-import           Lens.Family2                (view)
+import           Lens.Family2                        (view)
 
-import           Pipes                       (cat, (>->))
-import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
-import qualified Pipes.Prelude               as P
-import           Pipes.Safe                  (runSafeT)
-import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
-                                              conformingEntityIndices,
-                                              findNonExistentEntities,
-                                              indInfoConformsToEntitySpec,
-                                              indInfoFindRelevantPackageNames,
-                                              underlyingEntity)
-import           Poseidon.Package            (PackageReadOptions (..),
-                                              PoseidonPackage (..),
-                                              defaultPackageReadOptions,
-                                              getJointGenotypeData,
-                                              getJointIndividualInfo,
-                                              readPoseidonPackageCollection)
-import           Poseidon.SecondaryTypes     (IndividualInfo (..))
-import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
-                                              GenoEntry (..), GenoLine)
-import           SequenceFormats.Utils       (Chrom (..))
-import           System.IO                   (IOMode (..), hPutStrLn, stderr,
-                                              withFile)
-import           Text.Layout.Table           (asciiRoundS, column, def, expand,
-                                              rowsG, tableString, titlesH)
+import           Pipes                               (cat, (>->))
+import           Pipes.Group                         (chunksOf, foldsM,
+                                                      groupsBy)
+import qualified Pipes.Prelude                       as P
+import           Pipes.Safe                          (runSafeT)
+import           Poseidon.EntitiesList               (EntitiesList,
+                                                      PoseidonEntity (..),
+                                                      conformingEntityIndices,
+                                                      findNonExistentEntities,
+                                                      indInfoConformsToEntitySpec,
+                                                      indInfoFindRelevantPackageNames,
+                                                      underlyingEntity)
+import           Poseidon.Package                    (PackageReadOptions (..),
+                                                      PoseidonPackage (..),
+                                                      defaultPackageReadOptions,
+                                                      getJointGenotypeData,
+                                                      getJointIndividualInfo,
+                                                      readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes             (IndividualInfo (..))
+import           SequenceFormats.Bed                 (filterThroughBed,
+                                                      readBedFile)
+import           SequenceFormats.Eigenstrat          (EigenstratSnpEntry (..),
+                                                      GenoEntry (..), GenoLine)
+import           SequenceFormats.Genomic             (genomicPosition)
+import           SequenceFormats.Utils               (Chrom (..))
+import           System.IO                           (IOMode (..), hPutStrLn,
+                                                      stderr, withFile)
+import           Text.Layout.Table                   (asciiRoundS, column, def,
+                                                      expand, rowsG,
+                                                      tableString, titlesH)
 
-data FreqSpec = FreqNone | FreqK Int | FreqX Double deriving (Show)
+data FreqSpec = FreqNone
+    | FreqK Int
+    | FreqX Double
+    deriving (Show)
 
 data RASOptions = RASOptions
     { _rasBaseDirs       :: [FilePath]
@@ -60,6 +73,7 @@ data RASOptions = RASOptions
     , _rasTableOutFile   :: Maybe FilePath
     , _rasMaxSnps        :: Maybe Int
     , _rasNoTransitions  :: Bool
+    , _rasBedFile        :: Maybe FilePath
     }
     deriving (Show)
 
@@ -107,10 +121,16 @@ runRAS rasOpts = do
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
         let rasFold = buildRasFold jointIndInfo (_rasMinFreq rasOpts) (_rasMaxFreq rasOpts)
                 (_rasMaxMissingness rasOpts) maybeOutgroup popLefts popRights
+        let bedFilterFunc = case _rasBedFile rasOpts of
+                Nothing -> id
+                Just fn -> filterThroughBed (readBedFile fn) (genomicPosition . fst)
         blockData <- runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-            let eigenstratProdFiltered = eigenstratProd >-> P.filter (chromFilter (_rasExcludeChroms rasOpts))
-                    >-> capNrSnps (_rasMaxSnps rasOpts) >-> filterTransitions (_rasNoTransitions rasOpts)
+            let eigenstratProdFiltered =
+                    bedFilterFunc (eigenstratProd >->
+                                   P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->
+                                   capNrSnps (_rasMaxSnps rasOpts) >->
+                                   filterTransitions (_rasNoTransitions rasOpts))
                 eigenstratProdInChunks = case _rasJackknifeMode rasOpts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
@@ -142,8 +162,8 @@ runRAS rasOpts = do
                         (i, popLeft) <- zip [0..] popLefts
                         (j, popRight) <- zip [0..] popRights
                         (k, block) <- zip [(0 :: Int)..] blockData
-                        return [show popLeft, show popRight, show k, show (fst . blockStartPos $ block), 
-                            show (snd . blockStartPos $ block), show (fst . blockEndPos $ block), 
+                        return [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
+                            show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
                             show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]
                 forM_ rows $ \row -> hPutStrLn h (intercalate "\t" row)
   where
@@ -221,13 +241,13 @@ buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights =
                         directedTotalFreq = fromIntegral directedTotalCount / fromIntegral totalHaps
                     -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                     let conditionMin = case minFreq of
-                            FreqNone -> True                        
-                            FreqK k -> directedTotalCount >= k
-                            FreqX x -> directedTotalFreq >= x
+                            FreqNone -> True
+                            FreqK k  -> directedTotalCount >= k
+                            FreqX x  -> directedTotalFreq >= x
                         conditionMax = case maxFreq of
-                            FreqNone -> True                        
-                            FreqK k -> directedTotalCount <= k
-                            FreqX x -> directedTotalFreq <= x
+                            FreqNone -> True
+                            FreqK k  -> directedTotalCount <= k
+                            FreqX x  -> directedTotalFreq <= x
                     when (conditionMin && conditionMax) $ do
                         -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                         -- main loop
@@ -238,7 +258,7 @@ buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights =
                                 r <- rightI
                                 let nrDerived = fst $ computeAlleleCount genoLine r
                                 let n = 2 * length r
-                                if oFreq < 0.5 then 
+                                if oFreq < 0.5 then
                                     return (fromIntegral nrDerived / fromIntegral n)
                                 else
                                     return $ 1.0 - (fromIntegral nrDerived / fromIntegral n)
