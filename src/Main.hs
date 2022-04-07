@@ -186,4 +186,4 @@ parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transit
 
 parseBedFile :: OP.Parser (Maybe FilePath)
 parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An optional bed file that gives sites to be \
-    \included in the analysis.")
+    \included in the analysis." <> OP.value Nothing)

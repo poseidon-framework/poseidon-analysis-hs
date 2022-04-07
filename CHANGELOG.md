@@ -1,3 +1,5 @@
+- 0.1.2.2: bedfile now optional.
+- 0.1.2.1: added a --bedFile flag
 - 0.1.2.0: Added a --noTransitions flag
 - 0.1.1.1: Fixed a bug that caused the outgroup to be ignored in the main loop of RAS.
 - 0.1.1.0: Simplified and improved the CLI API for xerxes RAS
