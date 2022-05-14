@@ -292,9 +292,8 @@ runFstats opts = do
                         hPutStrLn h . intercalate "\t" $ ["Statistic", "a", "b", "c", "d", "Estimate", "StdErr", "Z score"]
                         forM_ (zip statSpecs jackknifeEstimates) $ \(fstat, result) -> do
                             let abcd = collectStatSpecGroups [fstat]
-                            hPutStrLn h . intercalate "\t" $ [show fstat] ++ map show abcd ++ [show (fst result), show (snd result), show (uncurry (/) result)]
-                        
-
+                            let abcdStr = take 4 (map show abcd ++ repeat "")
+                            hPutStrLn h . intercalate "\t" $ [show fstat] ++ abcdStr ++ [show (fst result), show (snd result), show (uncurry (/) result)]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat

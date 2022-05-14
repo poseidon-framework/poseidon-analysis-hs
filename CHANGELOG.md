@@ -1,3 +1,4 @@
+- 0.1.2.3: fixed table output bug in fstats
 - 0.1.2.2: bedfile now optional.
 - 0.1.2.1: added a --bedFile flag
 - 0.1.2.0: Added a --noTransitions flag

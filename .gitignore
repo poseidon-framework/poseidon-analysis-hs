@@ -3,3 +3,4 @@
 .Rproj.user
 goldenTests/testRasBlockOut.txt
 goldenTests/testRasOut.txt
+goldenTests/testTable.txt
