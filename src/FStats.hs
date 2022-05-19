@@ -9,8 +9,10 @@ module FStats (
 ) where
 
 import           Utils                       (GenomPos, JackknifeMode (..),
-                                              computeAlleleFreq, computeAlleleCount,
-                                              computeJackknifeOriginal, popSpecsNparser)
+                                              computeAlleleCount,
+                                              computeAlleleFreq,
+                                              computeJackknifeOriginal,
+                                              popSpecsNparser)
 
 import           Control.Applicative         ((<|>))
 import           Control.Exception           (throwIO)
@@ -18,7 +20,7 @@ import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
 import           Control.Monad               (forM_)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import           Data.List                   (intercalate, nub, elemIndex)
+import           Data.List                   (elemIndex, intercalate, nub)
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
 -- import           Debug.Trace                 (trace)
@@ -41,11 +43,13 @@ import           Poseidon.SecondaryTypes     (IndividualInfo (..))
 import           Poseidon.Utils              (PoseidonException (..))
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom)
-import           System.IO                   (hPutStrLn, stderr, withFile, IOMode(..))
+import           System.IO                   (IOMode (..), hPutStrLn, stderr,
+                                              withFile)
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
 import qualified Text.Parsec.String          as P
+import           Text.Printf                 (printf)
 
 -- | A datatype representing the command line options for the F-Statistics command
 data FstatsOptions = FstatsOptions
@@ -108,7 +112,7 @@ data BlockData = BlockData
 -- | A parser to parse Summary Statistic specifications.
 fStatSpecParser :: P.Parser FStatSpec
 fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecParser <|> P.try pwmSpecParser <|>
-    P.try hetSpecParser <|> 
+    P.try hetSpecParser <|>
     P.try fstSpecParser <|> P.try f3VanillaSpecParser <|> P.try f2VanillaSpecParser <|> fstVanillaSpecParser
   where
     f4SpecParser = do
@@ -202,7 +206,7 @@ computeFStat fStat gL =
     let caf = computeAlleleFreq
         cac gL' i = case computeAlleleCount gL' i of
             (_, 0) -> Nothing
-            x -> Just x
+            x      -> Just x
     in  case fStat of
             F4         aI bI cI dI -> computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
             F3vanilla  aI bI cI    -> computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
@@ -283,7 +287,7 @@ runFstats opts = do
                 tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
                 tableB = do
                     (fstat, result) <- zip statSpecs jackknifeEstimates
-                    return [show fstat, show (fst result), show (snd result), show (uncurry (/) result)]
+                    return [show fstat, printf "%.4g" (fst result), printf "%.4g" (snd result), show (uncurry (/) result)]
             putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
             case _foTableOut opts of
                 Nothing -> return ()
@@ -331,7 +335,7 @@ processBlocks :: [FStatSpec] -> [FStat] -> [BlockData] -> [(Double, Double)]
 processBlocks statSpecs stats blocks = do
     (i, statSpec, stat) <- zip3 [0..] statSpecs stats
     case statSpec of
-        F3Spec {} -> 
+        F3Spec {} ->
             let F3 _ _ cI = stat
                 relatedHetIndex = case elemIndex (Het cI) stats of
                     Nothing -> error "should never happen, cannot find related het-statistics for F3 stat"
@@ -349,7 +353,7 @@ processBlocks statSpecs stats blocks = do
                         denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
                     return $ num / denom
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
-        _ -> 
+        _ ->
             let values = map ((!!i) . blockStatVal) blocks
                 block_weights = map (fromIntegral . blockSiteCount) blocks
                 full_estimate = sum [m * v / sum block_weights | (m, v) <- zip block_weights values]
@@ -357,6 +361,6 @@ processBlocks statSpecs stats blocks = do
                     j <- [0..(length block_weights - 1)]
                     let weight_norm = sum [m | (k, m) <- zip [0..] block_weights, k /= j]
                     return $ sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights values, k /= j]
-            in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates             
-                
-                
+            in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
+
+

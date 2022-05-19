@@ -1,3 +1,4 @@
+- 0.1.2.4: Rounded stdout value output in fstats to 4 digits.
 - 0.1.2.3: fixed table output bug in fstats
 - 0.1.2.2: bedfile now optional.
 - 0.1.2.1: added a --bedFile flag
