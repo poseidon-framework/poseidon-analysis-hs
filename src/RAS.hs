@@ -8,7 +8,8 @@ import           Utils                               (GenomPos, GroupDef,
                                                       XerxesException (..),
                                                       computeAlleleCount,
                                                       computeAlleleFreq,
-                                                      computeJackknifeAdditive)
+                                                      computeJackknifeAdditive,
+                                                      computeJackknifeOriginal)
 
 import           Control.Exception                   (throwIO)
 import           Control.Foldl                       (FoldM (..), impurely,
@@ -172,7 +173,7 @@ runRAS rasOpts = do
         putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
 
         -- Output to the table file, same data as to the standard out, but tab-separated
-        case _rasTableOutFile rasOpts of
+        case _rasF4tableOutFile rasOpts of
             Nothing -> return ()
             Just outFn -> do
                 withFile outFn WriteMode $ \h -> do
@@ -183,35 +184,46 @@ runRAS rasOpts = do
         case _rasF4tableOutFile rasOpts of
             Nothing -> return ()
             Just outFn -> do
-                withFile outFn WriteMode $\h -> do
-                    hPutStrLn h $ intercalate "\t" ["Left1", "Left2", "Right", "Norm1", "Norm2", "RASDA", "StdErr"]
-                    (l1, popLeft1) <- zip [0..] popLefts
-                    (l2, popLeft2) <- zip [0..] popLefts
-                    (r, popRight) <- zip [0..] popRights
-                    let ras1_vals = [(blockVals bd !! l1) !! r | bd <- blockData]
-                        ras2_vals = [(blockVals bd !! l2) !! r | bd <- blockData]
-                        ras1_norms = [blockSiteCount bd !! l1 | bd <- blockData]
-                        ras2_norms = [blockSiteCount bd !! l2 | bd <- blockData]
-                        ras1_full_estimate = weightedAverage ras1_vals (map fromIntegral ras1_norms)
-                        ras2_full_estimate = weightedAverage ras2_vals (map fromIntegral ras2_norms)
-                        rasda_full_estimate = ras1_full_estimate - ras2_full_estimate
-                        -- compute RASDA estimates based on one block removed, in turn:
-                        rasda_minus1_estimates = do
-                            removeIndex <- [0.. (length blockData)]
-                            blockData_minus1 <- [bd | (i, bd) <- zip [0..] blockData, i /= removeIndex]
-                            let ras1_vals_minus1 = [(blockVals bd !! l1) !! r | bd <- blockData_minus1]
-                                ras2_vals_minus1 = [(blockVals bd !! l2) !! r | bd <- blockData_minus1]
-                                ras1_norms_minus1 = [blockSiteCount bd !! l1 | bd <- blockData_minus1]
-                                ras2_norms_minus1 = [blockSiteCount bd !! l2 | bd <- blockData_minus1]
-                                ras1_estimate_minus1 = weightedAverage ras1_vals_minus1 (map fromIntegral ras1_norms_minus1)
-                                ras2_estimate_minus1 = weightedAverage ras2_vals_minus1 (map fromIntegral ras2_norms_minus1)
-                                rasda_minus1_estimate = ras1_estimate_minus1 - ras2_estimate_minus1
-                        -- compute the block weights needed for Jackknife. Absolute values don't matter, only relative, so we'll just go with the one with more data to assign block weights.
-                        let jackknife_block_weights = if sum ras1_norms > sum ras2_norms then ras1_norms else ras2_norms
-                            rasda_jackknife_estimate = computeJackknifeOriginal rasda_full_estimate jackknife_block_weights rasda_minus1_estimates
+                withFile outFn WriteMode $ \h -> do
+                    hPutStrLn h $ intercalate "\t" ["Left1", "Left2", "Right", "Norm1", "Norm2", "RAS-F4", "StdErr", "Z score"]
+                    let rows = do
+                            -- loop over all possible left1, left2 and rights
+                            (l1, popLeft1) <- zip [0..] popLefts
+                            (l2, popLeft2) <- zip [0..] popLefts
+                            False <- return $ l1 == l2
+                            (r, popRight) <- zip [0..] popRights
+                            let ras1_vals = [(blockVals bd !! l1) !! r | bd <- blockData]
+                                ras2_vals = [(blockVals bd !! l2) !! r | bd <- blockData]
+                                ras1_norms = [blockSiteCount bd !! l1 | bd <- blockData]
+                                ras2_norms = [blockSiteCount bd !! l2 | bd <- blockData]
+                                ras1_full_estimate = weightedAverage ras1_vals (map fromIntegral ras1_norms)
+                                ras2_full_estimate = weightedAverage ras2_vals (map fromIntegral ras2_norms)
+                                rasf4_full_estimate = ras1_full_estimate - ras2_full_estimate
+                                -- compute rasf4 estimates based on one block removed, in turn:
+                            let rasf4_minus1_estimates = do
+                                    --loop over block-indices to remove each block in turn
+                                    removeIndex <- [0.. (length blockData)]
+                                    let blockData_minus1 = [bd | (i, bd) <- zip [0..] blockData, i /= removeIndex]
+                                    let ras1_vals_minus1 = [(blockVals bd !! l1) !! r | bd <- blockData_minus1]
+                                        ras2_vals_minus1 = [(blockVals bd !! l2) !! r | bd <- blockData_minus1]
+                                        ras1_norms_minus1 = [blockSiteCount bd !! l1 | bd <- blockData_minus1]
+                                        ras2_norms_minus1 = [blockSiteCount bd !! l2 | bd <- blockData_minus1]
+                                        ras1_estimate_minus1 = weightedAverage ras1_vals_minus1 (map fromIntegral ras1_norms_minus1)
+                                        ras2_estimate_minus1 = weightedAverage ras2_vals_minus1 (map fromIntegral ras2_norms_minus1)
+                                    return $ ras1_estimate_minus1 - ras2_estimate_minus1
+                            -- compute the block weights needed for Jackknife. Absolute values don't matter, only relative, so we'll just go with the one with more data to assign block weights.
+                            let jackknife_block_weights = if sum ras1_norms > sum ras2_norms then ras1_norms else ras2_norms
 
+                            -- compute the jackknife estimate and stderr
+                            let (rasf4_jackknife_estimate, rasf4_jackknife_stderr) =
+                                    computeJackknifeOriginal rasf4_full_estimate (map fromIntegral jackknife_block_weights) rasf4_minus1_estimates
 
-
+                            -- print
+                            return $ intercalate "\t" [show popLeft1, show popLeft2, show popRight, show (sum ras1_norms),
+                                show (sum ras2_norms), show rasf4_jackknife_estimate, show rasf4_jackknife_stderr,
+                                show (rasf4_jackknife_estimate / rasf4_jackknife_stderr)]
+                    mapM_ (hPutStrLn h) rows
+        -- optionally output the block file 
         case _rasBlockTableFile rasOpts of
             Nothing -> return ()
             Just fn -> withFile fn WriteMode $ \h -> do
@@ -248,7 +260,7 @@ runRAS rasOpts = do
 
 weightedAverage :: [Double] -> [Double] -> Double
 weightedAverage vals weights =
-    let num = sum $ zipWith (*) vals weight
+    let num = sum $ zipWith (*) vals weights
         denom = sum weights
     in  num / denom
 

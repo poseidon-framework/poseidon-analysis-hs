@@ -136,6 +136,7 @@ rasOptParser = RASOptions <$>
     parseMaxMissingness <*>
     parseBlockTableFile <*>
     parseTableOutFile <*>
+    parseF4tableOutFile <*>
     parseMaxSnps <*>
     parseNoTransitions <*>
     parseBedFile
@@ -171,6 +172,10 @@ parseMaxMissingness = OP.option OP.auto (OP.long "maxMissingness" <> OP.short 'm
 parseTableOutFile :: OP.Parser (Maybe FilePath)
 parseTableOutFile = OP.option (Just <$> OP.str) (OP.long "tableOutFile" <> OP.short 'f' <>
     OP.help "a file to which results are written as tab-separated file" <> OP.value Nothing)
+
+parseF4tableOutFile :: OP.Parser (Maybe FilePath)
+parseF4tableOutFile = OP.option (Just <$> OP.str) (OP.long "f4TableOutFile" <>
+    OP.help "a file to which F4 computations are written as tab-separated file" <> OP.value Nothing)
 
 parseBlockTableFile :: OP.Parser (Maybe FilePath)
 parseBlockTableFile = OP.option (Just <$> OP.str) (OP.long "blockTableFile" <>
