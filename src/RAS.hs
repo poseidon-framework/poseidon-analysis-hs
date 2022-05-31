@@ -4,7 +4,7 @@ module RAS where
 
 import           Utils                               (GenomPos, GroupDef,
                                                       JackknifeMode (..),
-                                                      PopConfig (..),
+                                                      RasConfig (..),
                                                       XerxesException (..),
                                                       computeAlleleCount,
                                                       computeAlleleFreq,
@@ -90,7 +90,7 @@ data BlockData = BlockData
 runRAS :: RASOptions -> IO ()
 runRAS rasOpts = do
     -- reading in the configuration file
-    PopConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
+    RasConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
     unless (null groupDefs) $ hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
     hPutStrLn stderr $ "Found left populations: " ++ show popLefts
     hPutStrLn stderr $ "Found right populations: " ++ show popRights
@@ -264,11 +264,11 @@ weightedAverage vals weights =
         denom = sum weights
     in  num / denom
 
-readPopConfig :: FilePath -> IO PopConfig
+readPopConfig :: FilePath -> IO RasConfig
 readPopConfig fn = do
     bs <- B.readFile fn
     case decodeEither' bs of
-        Left err -> throwIO $ PopConfigYamlException fn (show err)
+        Left err -> throwIO $ RasConfigYamlException fn (show err)
         Right x  -> return x
 
 addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
