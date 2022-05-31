@@ -173,7 +173,7 @@ runRAS rasOpts = do
         putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
 
         -- Output to the table file, same data as to the standard out, but tab-separated
-        case _rasF4tableOutFile rasOpts of
+        case _rasTableOutFile rasOpts of
             Nothing -> return ()
             Just outFn -> do
                 withFile outFn WriteMode $ \h -> do
