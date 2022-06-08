@@ -123,58 +123,41 @@ data RasConfig = RasConfigYamlStruct
 
 instance FromJSON RasConfig where
     parseJSON = withObject "RasConfigYamlStruct" $ \v -> RasConfigYamlStruct
-        <$> v .: "groupDefs"
-        <*> v .: "popLefts"
-        <*> v .: "popRights"
+        <$> v .:  "groupDefs"
+        <*> v .:  "popLefts"
+        <*> v .:  "popRights"
         <*> v .:? "outgroup"
 
--- parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
--- parseGroupDefsFromJSON v = do
---     maybeObj <- v .:? "groupDefs"
---     case maybeObj of
---         Nothing -> return []
---         Just obj -> return $ do
---             (key, value) <- toList obj
---             case P.runParser entitiesListP () "" value of
---                 Left err -> fail (show err)
---                 Right p  -> return (key, p)
+data FstatsConfig = FstatsConfigYamlStruct
+    { fstatsConfigGroupDef :: GroupDefList
+    , fstatsConfigStats    :: [MultiFstatSpec]
+    }
 
--- parsePopSpecsFromJSON :: Object -> Text -> Parser [PoseidonEntity]
--- parsePopSpecsFromJSON v label = do
---     popDefStrings <- v .: label
---     forM popDefStrings $ \popDefString -> do
---         case P.runParser entitySpecParser () "" popDefString of
---             Left err -> fail (show err)
---             Right p  -> return p
+data MultiFstatSpec = MultiFstatSpec {
+    multiFstatType :: String,
+    multiFstatPopA :: [PoseidonEntity],
+    multiFstatPopB :: [PoseidonEntity],
+    multiFstatPopC :: [PoseidonEntity],
+    multiFstatPopD :: [PoseidonEntity]
+}
 
--- parseMaybePopSpecFromJSON :: Object -> Text -> Parser (Maybe PoseidonEntity)
--- parseMaybePopSpecFromJSON v label = do
---     maybePopDefString <- v .:? label
---     case maybePopDefString of
---         Nothing -> return Nothing
---         Just p -> case P.runParser entitySpecParser () "" p of
---             Left err -> fail (show err)
---             Right p' -> return (Just p')
+instance FromJSON FstatsConfig where
+    parseJSON = withObject "FstatsConfigYamlStruct" $ \v -> FstatsConfigYamlStruct
+        <$> v .: "groupDefs"
+        <*> v .: "statistics"
 
--- data FstatsConfig = FstatsConfigYamlStruct
---     { fstatsConfigGroupDef :: [GroupDef]
---     , fstatsConfigStats    :: [MultiFstatSpec]
---     }
+instance FromJSON MultiFstatSpec where
+    parseJSON = withObject "MultiFstatSpec" $ \v -> MultiFstatSpec
+        <$> v .: "type"
+        <*> (maybeToList <$> v .:? "popA")
+        <*> (maybeToList <$> v .:? "popB")
+        <*> (maybeToList <$> v .:? "popC")
+        <*> (maybeToList <$> v .:? "popD")
 
--- data MultiFstatSpec = MultiFstatSpec {
---     multiFstatType :: String,
---     multiFstatPopA :: [PoseidonEntity],
---     multiFstatPopB :: [PoseidonEntity],
---     multiFstatPopC :: [PoseidonEntity],
---     multiFstatPopD :: [PoseidonEntity]
--- }
 
--- instance FromJSON FstatsConfig where
---     parseJSON = withObject "FstatsConfigYamlStruct" $ \v -> FstatsConfigYamlStruct
---         <$> parseGroupDefsFromJSON v
---         <*> some (parseMultiFstatSpecFromJSON v)
-
--- parseMultiFstatSpecFromJSON :: Object -> Parser MultiFstatSpec
+multiFstatSpec2Fstatspec :: MultiFstatSpec -> Either XerxesException [FstatSpec]
+multiFstatSpec2Fstatspec mFstatSpec = 
+    
 
 
 data XerxesException = RasConfigYamlException FilePath String
