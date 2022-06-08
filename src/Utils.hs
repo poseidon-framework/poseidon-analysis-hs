@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq, computeAlleleCount,
-computeJackknifeAdditive, computeJackknifeOriginal, P.runParser, RasConfig(..), GroupDef, XerxesException(..)) where
+computeJackknifeAdditive, computeJackknifeOriginal, P.runParser, RasConfig(..), GroupDefList(..), XerxesException(..), addGroupDefs) where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
@@ -18,7 +18,8 @@ import           SequenceFormats.Utils      (Chrom)
 import           Data.Text                  (Text, unpack)
 import           Poseidon.EntitiesList      (EntitiesList, PoseidonEntity (..),
                                              SignedEntitiesList, entitiesListP,
-                                             entitySpecParser)
+                                             entitySpecParser, indInfoConformsToEntitySpec)
+import           Poseidon.SecondaryTypes             (IndividualInfo (..))
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
 
@@ -96,15 +97,25 @@ computeJackknifeAdditive weights values =
     in  (theta, sqrt sigmaSquare)
 
 
-newtype GroupDef = GroupDef {getAssocList :: [(String, SignedEntitiesList)]}
-instance FromJSON GroupDef where
+newtype GroupDefList = GroupDefList {getAssocList :: [(String, SignedEntitiesList)]}
+
+instance FromJSON GroupDefList where
     parseJSON = withObject "groupDefs" $ \v -> do
-        fmap GroupDef . forM (toList v) $ \(key, value) -> do
+        fmap GroupDefList . forM (toList v) $ \(key, value) -> do
             groupEntities <- parseJSON value
             return (unpack key, groupEntities)
 
+addGroupDefs :: GroupDefList -> [IndividualInfo] -> [IndividualInfo]
+addGroupDefs (GroupDefList groupDefs) indInfoRows = do
+    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
+    let additionalGroupNames = do
+            (groupName, signedEntityList) <- groupDefs
+            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
+            return groupName
+    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
+
 data RasConfig = RasConfigYamlStruct
-    { rasConfigGroupDef :: GroupDef
+    { rasConfigGroupDef :: GroupDefList
     , rasConfigLefts    :: EntitiesList
     , rasConfigRights   :: EntitiesList
     , rasConfigOutgroup :: Maybe PoseidonEntity

@@ -2,14 +2,15 @@
 
 module RAS where
 
-import           Utils                               (GenomPos, GroupDef,
+import           Utils                               (GenomPos, GroupDefList (..),
                                                       JackknifeMode (..),
                                                       RasConfig (..),
                                                       XerxesException (..),
                                                       computeAlleleCount,
                                                       computeAlleleFreq,
                                                       computeJackknifeAdditive,
-                                                      computeJackknifeOriginal)
+                                                      computeJackknifeOriginal, 
+                                                      addGroupDefs)
 
 import           Control.Exception                   (throwIO)
 import           Control.Foldl                       (FoldM (..), impurely,
@@ -35,7 +36,6 @@ import           Poseidon.EntitiesList               (EntitiesList,
                                                       PoseidonEntity (..),
                                                       conformingEntityIndices,
                                                       findNonExistentEntities,
-                                                      indInfoConformsToEntitySpec,
                                                       indInfoFindRelevantPackageNames,
                                                       underlyingEntity)
 import           Poseidon.Package                    (PackageReadOptions (..),
@@ -90,7 +90,7 @@ data BlockData = BlockData
 runRAS :: RASOptions -> IO ()
 runRAS rasOpts = do
     -- reading in the configuration file
-    RasConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
+    RasConfigYamlStruct gd@(GroupDefList groupDefs) popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
     unless (null groupDefs) $ hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
     hPutStrLn stderr $ "Found left populations: " ++ show popLefts
     hPutStrLn stderr $ "Found right populations: " ++ show popRights
@@ -120,7 +120,7 @@ runRAS rasOpts = do
         hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
     else do
         -- annotate all individuals with the new adhoc-group definitions where necessary
-        let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
+        let jointIndInfoWithNewGroups = addGroupDefs gd jointIndInfoAll
         
         -- select only the packages needed for the statistics to be computed
         let relevantPackageNames = indInfoFindRelevantPackageNames (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
@@ -129,7 +129,7 @@ runRAS rasOpts = do
         mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
 
         -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
-        let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
+        let jointIndInfo = addGroupDefs gd . getJointIndividualInfo $ relevantPackages
 
         -- build the main fold, i.e. the thing that does the actual work with the genotype data and computes the RAS statistics (see buildRasFold)
         let rasFold = buildRasFold jointIndInfo (_rasMinFreq rasOpts) (_rasMaxFreq rasOpts)
@@ -270,15 +270,6 @@ readPopConfig fn = do
     case decodeEither' bs of
         Left err -> throwIO $ RasConfigYamlException fn (show err)
         Right x  -> return x
-
-addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
-addGroupDefs groupDefs indInfoRows = do
-    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
-    let additionalGroupNames = do
-            (groupName, signedEntityList) <- groupDefs
-            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
-            return groupName
-    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
 buildRasFold :: (MonadIO m) => [IndividualInfo] -> FreqSpec -> FreqSpec -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
 buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights =
