@@ -156,12 +156,47 @@ instance FromJSON MultiFstatSpec where
 
 
 multiFstatSpec2Fstatspec :: MultiFstatSpec -> Either XerxesException [FstatSpec]
-multiFstatSpec2Fstatspec mFstatSpec = 
-    
+multiFstatSpec2Fstatspec (MultiFstatSpec type popA popB popC popD) = 
+    case type of
+        "F4"         -> makeArg4Stats type F4Spec popA popB popC popD
+        "F3"         -> makeArg3Stats type F3Spec popA popB popC
+        "F2"         -> makeArg2Stats type F2Spec popA popB
+        "PWM"        -> makeArg2Stats type PWMspec popA popB
+        "Het"        -> makeArg1Stats type HetSpec popA
+        "FST"        -> makeArg2Stats type FSTspec popA popB
+        "F3vanilla"  -> makeArg3Stats type F3vanillaSpec popA popB popC
+        "F2vanilla"  -> makeArg2Stats type F2vanillaSpec popA popB
+        "FSTvanilla" -> makeArg2Stats type FSTvanillaSpec popA popB
+  where
+    makeArg1Stats name constr listA = 
+        let stats = [constr a | a <- listA]
+        in  if null stats then
+                Left . MultiFstatException $ name ++ " statistics need at least one entity in each of popA"
+            else
+                Right stats
+    makeArg2Stats name constr listA listB = 
+        let stats = [constr a b | a <- listA, b <- listB]
+        in  if null stats then 
+                Left . MultiFstatException $ name ++ " statistics need at least one entity in each of popA and popB"
+            else
+                Right stats
+    makeArg3Stats name constr listA listB listC = 
+        let stats = [constr a b c | a <- listA, b <- listB, c <- listC]
+        in  if null stats then
+                Left . MultiFstatException $ name ++ " statistics need at least one entity in each of popA, popB and popC"
+            else
+                Right stats
+    makeArg4Stats name constr listA listB listC listD = 
+        let stats = [constr a b c d | a <- listA, b <- listB, c <- listC, d <- listD]
+        in  if null stats then
+                Left . MultiFstatException $ name ++ " statistics need at least one entity in each of popA, popB, popC and popD"
+            else
+                Right stats
 
 
 data XerxesException = RasConfigYamlException FilePath String
     | GroupDefException String
+    | MultiFstatException String
     deriving (Show)
 
 instance Exception XerxesException
