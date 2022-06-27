@@ -21,9 +21,10 @@ import           Control.Monad               (forM_, when)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import           Data.Char                   (isSpace)
 import           Data.List                   (elemIndex, intercalate, nub)
+import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
-import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Mutable         as VM
 -- import           Debug.Trace                 (trace)
 import           Lens.Family2                (view)
 import           Pipes                       (cat, (>->))
@@ -80,8 +81,8 @@ data FStatSpec = FStatSpec FStatType [PoseidonEntity] (Maybe AscertainmentSpec) 
 data FStat = FStat {
     _fType :: FStatType
     _slotI :: [[Int]]
-    _ascOutgroupI :: [Int]
-    _ascRefI :: [Int]
+    _ascOutgroupI :: [Int] -- an empty list here means that minor allele frequencies are to be taken as ascertaining frequency
+    _ascRefI :: [Int] -- empty list means no ascertainment
     _ascLower :: Double
     _ascUpper :: Double
 } deriving (Eq)
@@ -99,6 +100,8 @@ data BlockData = BlockData
     , blockEndPos    :: GenomPos
     , blockSiteCount :: Int
     , blockStatVal   :: [[Double]] -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
+    -- For example, most stats will use two numbers, one for the accumulating statistic, and one for the normalisation. Some use more, like F3, which 
+    -- accumulates not only (c-a)(c-b), but also the heterozygosity for the denominator, both of which also need normalisation, so F3 has four accumulators.
     }
     deriving (Show)
 
@@ -106,7 +109,8 @@ data BlockAccumulator = BlockAccumulator {
     accMaybeStartPos :: Maybe GenomPos
     accMaybeEndPos :: Maybe GenomPos
     accCount :: Int
-    accValues :: VM.IOVector [Double] -- this is the key value accumulator: for each statistic there is a list of accumulators if needed.
+    accValues :: V.IOVector (VUM.IOVector Double) -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
+        -- the outer vector is boxed and immutable, the inner vector is unboxed and mutable, so that values can be updated as we loop through the data.
 }
 
 summaryPrintFstats :: FStatSpec -> String
@@ -116,7 +120,7 @@ summaryPrintFstats (FStatSpec fType slots maybeAsc) =
             Just _ -> "_ascertained"
     in  show fType ++ "("  ++ intercalate "," (map show slots) ++ ")" ++ ascString
 
--- | A parser to parse Summary Statistic specifications.
+-- | A parser to parse Summary Statistic specifications from the simple text file input. Every line is one statistics. No ascertainment can be given with this interface.
 fStatSpecParser :: P.Parser FStatSpec
 fStatSpecParser = do
     typeStr <- P.many1 (P.satisfy (\c -> c /= '('))
@@ -127,7 +131,7 @@ fStatSpecParser = do
     slots <- P.between (P.char '(') (P.char ')') parseEntities
     when (not (checkFstatSlotLength fStatType slots)) $
         fail $ "Not the right number of arguments to Statistic " ++ show fStatType
-    return $ FStatSpec fStatType slots Nothing
+    return $ FStatSpec fStatType slots Nothing -- no ascertainment can be specified using this input interface.
   where
     parseEntities = P.sepBy1 customEntitySpecParser (P.char ',' <* P.spaces)
     customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
@@ -136,7 +140,8 @@ fStatSpecParser = do
         parseGroup = Group <$> parseName
         parseInd   = Ind   <$> P.between (P.char '<') (P.char '>') parseName
         parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
-        charList = ",<>*()" :: [Char]
+        charList = ",<>*()" :: [Char] -- we use a custom parser here, because we cannot tolerate bracket openings, which is something that is not constrained in 
+            -- Poseidon.EntityList.
     checkFstatSlotLength fStatType slots =
         let n = length slots
         in  case fStatType of
@@ -150,6 +155,7 @@ fStatSpecParser = do
                 FSTvanilla -> n == 2
                 F2vanilla  -> n == 2
 
+-- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
 buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> ([FStat], FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs =
     let getI = (flip conformingEntityIndices) indInfo . return
@@ -163,75 +169,106 @@ buildStatSpecsFold indInfo fStatSpecs =
     in  (fStats, FoldM (step fStats) (initialize fStats) (extract fStats))
   where
     step :: (MonadIO m) => [FStat] -> BlockAccumulator -> (EigenstratSnpEntry, GenoLine) -> m BlockAccumulator
-    step fstats blockAccum (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step fStats blockAccum (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+        -- this function is called for every SNP.
         let newStartPos = case accMaybeStartPos blockAccum of
                 Nothing       -> Just (c, p)
                 Just (c', p') -> Just (c', p')
             newEndPos = Just (c, p)
-        forM_ (zip [0..] fstats) $ \(i, fstat) -> do
-            case computeFStatAccumulators fstat genoLine of
-                Just v  -> do
-                    liftIO $ VM.modify (accValues blockAccum)
-                    (\v -> mapM (\(j, x) -> VUM.modify v (+x) j) (zip [0..] v))
+        forM_ (zip [0..] fStats) $ \(i, fstat) -> do
+            -- loop over all statistics
+            let maybeAccValues = computeFStatAccumulators fstat genoLine -- compute the accumulating values for that site.
+            forM_ (zip [0..] maybeAccValues) $ \(j, maybeAccVal) -> do
+                case maybeAccVal of
+                    Nothing -> return ()
+                    Just x -> liftIO $ VUM.modify (accValues blockAccum V.! i) (+x) j -- add the value to the respective accumulator.
                 Nothing -> return ()
         return $ blockAccum {
             accMaybeStartPos = newStartPos,
             accMaybeEndPos   = newEndPos,
-            accCount         = accCount blockAccum + 1}
-    initialize :: (MonadIO m) => Int -> m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
-    initialize n = do
-        normVec <- liftIO $ VUM.replicate n 0
-        valVec <- liftIO $ VUM.replicate n 0.0
-        return (Nothing, Nothing, 0, normVec, valVec)
-    extract :: (MonadIO m) => (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) -> m BlockData
-    extract (maybeStartPos, maybeEndPos, count, normVec, valVec) = do
+            accCount         = accCount blockAccum + 1} -- also increment the overall block size by the number of SNPs in that blockl. Note that this simply 
+            -- counts the number of SNPs in a block, and ignores missing data. Missing data is considered within each accumulator.
+    initialize :: (MonadIO m) => [FStat] -> m BlockAccumulator
+    initialize fStats = do
+        listOfInnerVectors <- forM fStats $ \(FStat fType _ _ _ _ _) -> do
+            case fType of
+                F3 -> VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                _  -> VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.      
+        return $ BlockAccumulator Nothing Nothing 0 (V.fromList listOfInnerVectors)
+    extract :: (MonadIO m) => BlockAccumulator -> m BlockData
+    extract (BlockAccumulator maybeStartPos maybeEndPos count valVec) = do
         let Just startPos = maybeStartPos
             Just endPos = maybeEndPos
-        normVecF <- liftIO $ VU.freeze normVec
-        valVecF <- liftIO $ VU.freeze valVec
-        let statVals = zipWith (\v n -> v / fromIntegral n) (VU.toList valVecF) (VU.toList normVecF)
+        statVals <- mapM (fmap VU.toList . VU.freeze) (V.toList valVec) -- this unfolds the vector of mutable vectors into a list of lists.
         return $ BlockData startPos endPos count statVals
 
-computeFStat :: FStat -> GenoLine -> Maybe Double
-computeFStat (FStat fType indices) gL =
-    let caf = computeAlleleFreq
-        cac gL' i = case computeAlleleCount gL' i of
+-- TODO: Currently ignores ascertainment!
+computeFStatAccumulators :: FStat -> GenoLine -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
+-- but in case of F3, for example, also a second accumulator capturing the heterozygosity
+computeFStatAccumulators (FStat fType indices) gL =
+    let caf = computeAlleleFreq -- this returns Nothing if missing data
+        cac gL' i = case computeAlleleCount gL' i of -- this also returns Nothing if missing data.
             (_, 0) -> Nothing
             x      -> Just x
     in  case (fType, indices) of
-            (F4,         [aI, bI, cI, dI]) -> computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
-            (F3vanilla,  [aI, bI, cI])     -> computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
-            (F2vanilla,  [aI, bI])         -> computeF2vanilla  <$> caf gL aI <*> caf gL bI
-            (FSTvanilla, [aI, bI])         -> computeFSTvanilla <$> caf gL aI <*> caf gL bI
-            (PWM,        [aI, bI])         -> computePWM        <$> caf gL aI <*> caf gL bI
-            (F3,         [aI, bI, cI])     -> computeF3         <$> caf gL aI <*> caf gL bI <*> cac gL cI
-            (Het,        [aI])             -> computeHet        <$> cac gL aI
-            (F2,         [aI, bI])         -> computeF2         <$> cac gL aI <*> cac gL bI
+            (F4,         [aI, bI, cI, dI]) -> computeF4         (caf gL aI) (caf gL bI) (caf gL cI) (caf gL dI)
+            (F3vanilla,  [aI, bI, cI])     -> computeF3vanilla  (caf gL aI) (caf gL bI) (caf gL cI)
+            (F2vanilla,  [aI, bI])         -> computeF2vanilla  (caf gL aI) (caf gL bI)
+            (FSTvanilla, [aI, bI])         -> computeFSTvanilla (caf gL aI) (caf gL bI)
+            (PWM,        [aI, bI])         -> computePWM        (caf gL aI) (caf gL bI)
+            (F3,         [aI, bI, cI])     -> computeF3         (caf gL aI) (caf gL bI) (cac gL cI)
+            (Het,        [aI])             -> computeHet        (cac gL aI)
+            (F2,         [aI, bI])         -> computeF2         (cac gL aI) (cac gL bI)
             (FST,        [aI, bI])         -> computeFST        (cac gL aI) (cac gL bI)
             _ -> error "should never happen"
   where
     -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
-    computeF4         a b c d = (a - b) * (c - d)
-    computeF3vanilla  a b c   = (c - a) * (c - b)
-    computeF2vanilla  a b     = (a - b) * (a - b)
-    computeFSTvanilla a b     = (a - b)^(2 :: Int) / (a * (1 - b) + b * (1 - a))
-    computePWM        a b     = a * (1.0 - b) + (1.0 - a) * b
-    computeHet (na, sa) = 2.0 * fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
-    computeF3 a b (nc, sc) =
-        let c = computeFreq nc sc
-            corrFac = 0.5 * computeHet (nc, sc) / fromIntegral sc
-        in  computeF3vanilla a b c - corrFac
-    computeF2 (na, sa) (nb, sb) =
+    -- all of these functions return a list of Maybes, with Nothing denoting missing data for this specific
+    -- accumulator.
+    computeF4 (Just a) (Just b) (Just c) (Just d) = [Just (a - b) * (c - d), Just 1.0]
+    computeF4 _                                   = [Nothing, Nothing]
+    
+    computeF3vanilla (Just a) (Just b) (Just c) = [Just (c - a) * (c - b), Just 1.0]
+    computeF3vanilla _                          = [Nothing, Nothing]
+    
+    computeF2vanilla (Just a) (Just b) = [Just (a - b) * (a - b), Just 1.0]
+    computeF2vanilla _                 = [Nothing, Nothing]
+    
+    computeFSTvanilla (Just a) (Just b) = [Just (a - b)^(2 :: Int) / (a * (1 - b) + b * (1 - a)), Just 1.0]
+    computeFSTvanilla _                 = [Nothing, Nothing]
+    
+    computePWM (Just a) (Just b) = [Just a * (1.0 - b) + (1.0 - a) * b, Just 1.0]
+    computeWPM _                 = [Nothing, Nothing]
+
+    computeHet (Just (na, sa)) = [Just 2.0 * fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1)), Just 1.0]
+    computeHet Nothing         = [Nothing, Nothing]
+    
+    -- this is the only statistic currently returning four accumulators.
+    computeF3 maybeA maybeB maybeCcounts =
+        let (numAcc, numNorm) = case (maybeA, maybeB) of
+                (Just a, Just b) -> 
+                    let c = computeFreq nc sc
+                        corrFac = 0.5 * computeHet (nc, sc) / fromIntegral sc
+                    in  (Just (computeF3vanilla a b c - corrFac), Just 1.0)
+                _ -> (Nothing, Nothing)
+            (denomAcc, denomNorm) = case maybeCcounts of
+                Just (nc, sc) -> (Just (computeHet (nc, sc)), Just 1.0)
+                _ -> (Nothing, Nothing)
+        in  [numAcc, numNorm, denomAcc, denomNorm]
+    
+    computeF2 (Just (na, sa)) (Just (nb, sb)) =
         let a = computeFreq na sa
             b = computeFreq nb sb
             corrFac = 0.5 * computeHet (na, sa) / fromIntegral sa + 0.5 * computeHet (nb, sb) / fromIntegral sb
-        in  computeF2vanilla a b - corrFac
-    computeFST maybeNaSa maybeNbSb = case (maybeNaSa, maybeNbSb) of
-        (Just (na, sa), Just (nb, sb)) ->
-            let num = computeF2 (na, sa) (nb, sb)
-                denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
-            in  if denom > 0 then Just (num / denom) else Nothing
-        _ -> Nothing
+        in  [Just (computeF2vanilla a b - corrFac), Just 1.0]
+    computeF2 _ = [Nothing, Nothing]
+
+    computeFST (Just (na, sa)) (Just (nb, sb)) =
+        let num = computeF2 (na, sa) (nb, sb)
+            denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
+        in  if denom > 0 then [Just (num / denom), Just 1.0] else [Nothing, Nothing]
+    computeFST _ = [Nothing, Nothing]
+
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
 pacReadOpts :: PackageReadOptions
@@ -277,20 +314,20 @@ runFstats opts = do
                 purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
             let jackknifeEstimates = processBlocks fStats blocks
             let colSpecs = replicate 4 (column expand def def def)
-                tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
+                tableH = ["Statistic", "a", "b", "c", "d", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
                 tableB = do
                     (fstat, result) <- zip statSpecs jackknifeEstimates
-                    return [summaryPrintFstats fstat, printf "%.4g" (fst result), printf "%.4g" (snd result), show (uncurry (/) result)]
+                    let FStatSpec fType slots maybeAsc = fstat
+                        abcdStr = take 4 (map show slots ++ repeat "")
+                        (asc1, asc2) = case maybeAsc of
+                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
+                            Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
+                            _ -> ("n/a", "n/a")
+                    return $ [show fType] ++ abcdStr ++ [asc1, asc2] ++ [( printf "%.4g" (fst result), printf "%.4g" (snd result), show (uncurry (/) result)]
             putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
             case _foTableOut opts of
                 Nothing -> return ()
-                Just outFn -> do
-                    withFile outFn WriteMode $ \h -> do
-                        hPutStrLn h . intercalate "\t" $ ["Statistic", "a", "b", "c", "d", "Estimate", "StdErr", "Z score"]
-                        forM_ (zip statSpecs jackknifeEstimates) $ \(fstat, result) -> do
-                            let abcd = collectStatSpecGroups [fstat]
-                            let abcdStr = take 4 (map show abcd ++ repeat "")
-                            hPutStrLn h . intercalate "\t" $ [summaryPrintFstats fstat] ++ abcdStr ++ [show (fst result), show (snd result), show (uncurry (/) result)]
+                Just outFn -> withFile outFn WriteMode $ \h -> mapM_ (hPutStrLn h . intercalate "\t") tableB
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
@@ -316,21 +353,20 @@ collectStatSpecGroups statSpecs = nub $ concat [slots | FStatSpec _ slots _ <- s
 processBlocks :: [FStat] -> [BlockData] -> [(Double, Double)]
 processBlocks stats blocks = do
     (i, stat) <- zip [0..] stats
-    case stat of
-        FStat F3 [_, _, cI] ->
-            let relatedHetIndex = case elemIndex (FStat Het [cI]) stats of
-                    Nothing -> error "should never happen, cannot find related het-statistics for F3 stat"
-                    Just j -> j
-                numerator_values = map ((!!i) . blockStatVal) blocks
-                denominator_values = map ((!!relatedHetIndex) . blockStatVal) blocks
+    case _fType stat of
+        F3 ->
+            let numerator_values = map ((!!0) . (!!i) . blockStatVal) blocks
+                numerator_norm = map ((!!1) . (!!i) . blockStatVal) blocks
+                denominator_values = map ((!!2) . (!!i) . blockStatVal) blocks
+                denominator_norm = map ((!!3) . (!!i) . blockStatVal) blocks
                 block_weights = map (fromIntegral . blockSiteCount) blocks
-                num_full = sum [m * v / sum block_weights | (m, v) <- zip block_weights numerator_values]
-                denom_full = sum [m * v / sum block_weights | (m, v) <- zip block_weights denominator_values]
+                num_full = sum numerator_values / sum numerator_norm
+                denom_full = sum denominator_values / sum denominator_norm
                 full_estimate = num_full / denom_full
                 partial_estimates = do
                     j <- [0..(length block_weights - 1)]
                     let weight_norm = sum [m | (k, m) <- zip [0..] block_weights, k /= j]
-                        num = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights numerator_values, k /= j]
+                        num = sum [v | (k, v) <- zip3 [0..] block_weights numerator_values, k /= j]
                         denom = sum [m * v / weight_norm | (k, m, v) <- zip3 [0..] block_weights denominator_values, k /= j]
                     return $ num / denom
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
