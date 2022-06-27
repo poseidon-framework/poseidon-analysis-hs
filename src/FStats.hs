@@ -23,6 +23,7 @@ import           Data.Char                   (isSpace)
 import           Data.List                   (elemIndex, intercalate, nub)
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
+import qualified Data.Vector.Mutable as VM
 -- import           Debug.Trace                 (trace)
 import           Lens.Family2                (view)
 import           Pipes                       (cat, (>->))
@@ -159,21 +160,24 @@ buildStatSpecsFold indInfo fStatSpecs =
                     Just (AscertainmentSpec ogE refE lo' up') -> (maybe [] getI ogE, getI refE, lo', up')
             return $ FStat t (map getI slots) ascOG ascRef lo up
         n = length fStats
-    in  (fStats, FoldM (step fStats) (initialize fStats) (extract fStats)
+    in  (fStats, FoldM (step fStats) (initialize fStats) (extract fStats))
   where
     step :: (MonadIO m) => [FStat] -> BlockAccumulator -> (EigenstratSnpEntry, GenoLine) -> m BlockAccumulator
-    step fstats (maybeStartPos, _, count, normVec, valVec) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
-        let newStartPos = case maybeStartPos of
+    step fstats blockAccum (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+        let newStartPos = case accMaybeStartPos blockAccum of
                 Nothing       -> Just (c, p)
                 Just (c', p') -> Just (c', p')
             newEndPos = Just (c, p)
         forM_ (zip [0..] fstats) $ \(i, fstat) -> do
-            case computeFStat fstat genoLine of
+            case computeFStatAccumulators fstat genoLine of
                 Just v  -> do
-                    liftIO $ VUM.modify normVec (+1) i
-                    liftIO $ VUM.modify valVec (+v) i
+                    liftIO $ VM.modify (accValues blockAccum)
+                    (\v -> mapM (\(j, x) -> VUM.modify v (+x) j) (zip [0..] v))
                 Nothing -> return ()
-        return (newStartPos, newEndPos, count + 1, normVec, valVec)
+        return $ blockAccum {
+            accMaybeStartPos = newStartPos,
+            accMaybeEndPos   = newEndPos,
+            accCount         = accCount blockAccum + 1}
     initialize :: (MonadIO m) => Int -> m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
     initialize n = do
         normVec <- liftIO $ VUM.replicate n 0
