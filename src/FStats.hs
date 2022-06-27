@@ -68,25 +68,52 @@ data FstatsOptions = FstatsOptions
     , _foTableOut        :: Maybe FilePath
     }
 
+-- | A datatype to represent different types of F-Statistics
 data FStatType = F4 | F3 | F2 | PWM | Het | FST | F3vanilla | F2vanilla | FSTvanilla
     deriving (Show, Read, Eq)
 
--- | A datatype to represent Summary Statistics to be computed from genotype data.
-data FStatSpec = FStatSpec FStatType [PoseidonEntity] deriving (Eq)
+-- | A datatype to represent F-Statistics to be computed from genotype data.
+data FStatSpec = FStatSpec FStatType [PoseidonEntity] (Maybe AscertainmentSpec) deriving (Eq, Show)
 
-instance Show FStatSpec where
-    show (FStatSpec fType slots) = show fType ++ "("  ++ intercalate "," (map show slots) ++ ")"
+-- | An internal datatype to represent Summary statistics with indices of individuals given as integers, and ascertainment information
+data FStat = FStat {
+    _fType :: FStatType
+    _slotI :: [[Int]]
+    _ascOutgroupI :: [Int]
+    _ascRefI :: [Int]
+    _ascLower :: Double
+    _ascUpper :: Double
+} deriving (Eq)
 
--- | An internal datatype to represent Summary statistics with indices of individuals given as integers
-data FStat = FStat FStatType [[Int]] deriving (Eq)
+data AscertainmentSpec = AscertainmentSpec {
+    ascOutgroupSpec  :: Maybe PoseidonEntity, -- Here, a Nothing denotes that minor allele frequency in ascRefgroup should be used, 
+                                         --otherwise use derived allele frequencies in the ref-group, where the ancestral allele is given by the outgroup
+    ascRefgroupSpec  :: PoseidonEntity,
+    ascLowerFreqSpec :: Double,
+    ascUpperFreqSpec :: Double
+} deriving (Show, Eq)
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos
     , blockSiteCount :: Int
-    , blockStatVal   :: [Double]
+    , blockStatVal   :: [[Double]] -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
     }
     deriving (Show)
+
+data BlockAccumulator = BlockAccumulator {
+    accMaybeStartPos :: Maybe GenomPos
+    accMaybeEndPos :: Maybe GenomPos
+    accCount :: Int
+    accValues :: VM.IOVector [Double] -- this is the key value accumulator: for each statistic there is a list of accumulators if needed.
+}
+
+summaryPrintFstats :: FStatSpec -> String
+summaryPrintFstats (FStatSpec fType slots maybeAsc) =
+    let ascString = case maybeAsc of
+            Nothing -> ""
+            Just _ -> "_ascertained"
+    in  show fType ++ "("  ++ intercalate "," (map show slots) ++ ")" ++ ascString
 
 -- | A parser to parse Summary Statistic specifications.
 fStatSpecParser :: P.Parser FStatSpec
@@ -99,7 +126,7 @@ fStatSpecParser = do
     slots <- P.between (P.char '(') (P.char ')') parseEntities
     when (not (checkFstatSlotLength fStatType slots)) $
         fail $ "Not the right number of arguments to Statistic " ++ show fStatType
-    return $ FStatSpec fStatType slots
+    return $ FStatSpec fStatType slots Nothing
   where
     parseEntities = P.sepBy1 customEntitySpecParser (P.char ',' <* P.spaces)
     customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
@@ -125,14 +152,16 @@ fStatSpecParser = do
 buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> ([FStat], FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs =
     let getI = (flip conformingEntityIndices) indInfo . return
-        fStatsBasic = [FStat t (map getI slots) | FStatSpec t slots <- fStatSpecs]
-        additionalHetStats = [FStat Het [cI] | FStat F3 [_, _, cI] <- fStatsBasic]
-        fStatsAll = fStatsBasic ++ additionalHetStats
-        n = length fStatsAll
-    in  (fStatsAll, FoldM (step fStatsAll) (initialize n) extract)
+        fStats = do
+            FStatSpec t slots maybeAsc <- fStatSpecs
+            let (ascOG, ascRef, lo, up) = case maybeAsc of
+                    Nothing -> ([], [], 0.0, 1.0)
+                    Just (AscertainmentSpec ogE refE lo' up') -> (maybe [] getI ogE, getI refE, lo', up')
+            return $ FStat t (map getI slots) ascOG ascRef lo up
+        n = length fStats
+    in  (fStats, FoldM (step fStats) (initialize fStats) (extract fStats)
   where
-    step :: (MonadIO m) => [FStat] -> (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double) ->
-        (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, Int, VUM.IOVector Int, VUM.IOVector Double)
+    step :: (MonadIO m) => [FStat] -> BlockAccumulator -> (EigenstratSnpEntry, GenoLine) -> m BlockAccumulator
     step fstats (maybeStartPos, _, count, normVec, valVec) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         let newStartPos = case maybeStartPos of
                 Nothing       -> Just (c, p)
@@ -230,7 +259,8 @@ runFstats opts = do
             let relevantPackages = filterRelevantPackages collectedStats allPackages
             hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
             forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
-            hPutStrLn stderr $ "Computing stats " ++ show statSpecs
+            hPutStrLn stderr $ "Computing stats:"
+            mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
             let jointIndInfo = getJointIndividualInfo relevantPackages
             let (fStats, statsFold) = buildStatSpecsFold jointIndInfo statSpecs
             blocks <- runSafeT $ do
@@ -246,7 +276,7 @@ runFstats opts = do
                 tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
                 tableB = do
                     (fstat, result) <- zip statSpecs jackknifeEstimates
-                    return [show fstat, printf "%.4g" (fst result), printf "%.4g" (snd result), show (uncurry (/) result)]
+                    return [summaryPrintFstats fstat, printf "%.4g" (fst result), printf "%.4g" (snd result), show (uncurry (/) result)]
             putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
             case _foTableOut opts of
                 Nothing -> return ()
@@ -256,7 +286,7 @@ runFstats opts = do
                         forM_ (zip statSpecs jackknifeEstimates) $ \(fstat, result) -> do
                             let abcd = collectStatSpecGroups [fstat]
                             let abcdStr = take 4 (map show abcd ++ repeat "")
-                            hPutStrLn h . intercalate "\t" $ [show fstat] ++ abcdStr ++ [show (fst result), show (snd result), show (uncurry (/) result)]
+                            hPutStrLn h . intercalate "\t" $ [summaryPrintFstats fstat] ++ abcdStr ++ [show (fst result), show (snd result), show (uncurry (/) result)]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
@@ -277,7 +307,7 @@ readStatSpecsFromFile statSpecsFile = do
         Right r  -> return r
 
 collectStatSpecGroups :: [FStatSpec] -> [PoseidonEntity]
-collectStatSpecGroups statSpecs = nub $ concat [slots | FStatSpec _ slots <- statSpecs]
+collectStatSpecGroups statSpecs = nub $ concat [slots | FStatSpec _ slots _ <- statSpecs]
 
 processBlocks :: [FStat] -> [BlockData] -> [(Double, Double)]
 processBlocks stats blocks = do
