@@ -11,15 +11,15 @@ module FStats (
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleCount,
                                               computeAlleleFreq,
-                                              computeJackknifeOriginal,
-                                              popSpecsNparser)
+                                              computeJackknifeOriginal)
 
 import           Control.Applicative         ((<|>))
 import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
-import           Control.Monad               (forM_)
+import           Control.Monad               (forM_, when)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
+import           Data.Char                   (isSpace)
 import           Data.List                   (elemIndex, intercalate, nub)
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
@@ -50,6 +50,7 @@ import           Text.Layout.Table           (asciiRoundS, column, def, expand,
 import qualified Text.Parsec                 as P
 import qualified Text.Parsec.String          as P
 import           Text.Printf                 (printf)
+import           Text.Read                   (readMaybe)
 
 -- | A datatype representing the command line options for the F-Statistics command
 data FstatsOptions = FstatsOptions
@@ -68,13 +69,13 @@ data FstatsOptions = FstatsOptions
     }
 
 data FStatType = F4 | F3 | F2 | PWM | Het | FST | F3vanilla | F2vanilla | FSTvanilla
-    deriving (Show, Read)
+    deriving (Show, Read, Eq)
 
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
 data FStatSpec = FStatSpec FStatType [PoseidonEntity] deriving (Eq)
 
 instance Show FStatSpec where
-    show (FStatSpec type slots) = show type ++ "("  ++ intercalate "," (map show slots) ++ ")"
+    show (FStatSpec fType slots) = show fType ++ "("  ++ intercalate "," (map show slots) ++ ")"
 
 -- | An internal datatype to represent Summary statistics with indices of individuals given as integers
 data FStat = FStat FStatType [[Int]] deriving (Eq)
@@ -90,63 +91,42 @@ data BlockData = BlockData
 -- | A parser to parse Summary Statistic specifications.
 fStatSpecParser :: P.Parser FStatSpec
 fStatSpecParser = do
-        typeStr <- P.satisfy (\c -> c /= '(')
-        type <- case readMaybe typeStr of
-            Just t -> return t
-            Nothing -> fail $ "Cannot parse Statistic type " ++ typeStr ++
-                ". Must be one of F4, F3, F2, FST, PWM, Het, F3vanilla, FSTvanilla"
-        [a, b, c, d] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 4)
-        return $ F4Spec a b c d
-    f3SpecParser = do
-        _ <- P.string "F3"
-        [a, b, c] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 3)
-        return $ F3Spec a b c
-    f2SpecParser = do
-        _ <- P.string "F2"
-        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-        return $ F2Spec a b
-    pwmSpecParser = do
-        _ <- P.string "PWM"
-        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-        return $ PWMspec a b
-    hetSpecParser = do
-        _ <- P.string "Het"
-        [a] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 1)
-        return $ HetSpec a
-    fstSpecParser = do
-        _ <- P.string "FST"
-        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-        return $ FSTspec a b
-    f3VanillaSpecParser = do
-        _ <- P.string "F3vanilla"
-        [a, b, c] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 3)
-        return $ F3vanillaSpec a b c
-    f2VanillaSpecParser = do
-        _ <- P.string "F2vanilla"
-        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-        return $ F2vanillaSpec a b
-    fstVanillaSpecParser = do
-        _ <- P.string "FSTvanilla"
-        [a, b] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 2)
-        return $ FSTvanillaSpec a b
+    typeStr <- P.many1 (P.satisfy (\c -> c /= '('))
+    fStatType <- case readMaybe typeStr of
+        Just t -> return t
+        Nothing -> fail $ "Cannot parse Statistic type " ++ typeStr ++
+            ". Must be one of F4, F3, F2, FST, PWM, Het, F3vanilla, FSTvanilla"
+    slots <- P.between (P.char '(') (P.char ')') parseEntities
+    when (not (checkFstatSlotLength fStatType slots)) $
+        fail $ "Not the right number of arguments to Statistic " ++ show fStatType
+    return $ FStatSpec fStatType slots
+  where
+    parseEntities = P.sepBy1 customEntitySpecParser (P.char ',' <* P.spaces)
+    customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
+      where
+        parsePac   = Pac   <$> P.between (P.char '*') (P.char '*') parseName
+        parseGroup = Group <$> parseName
+        parseInd   = Ind   <$> P.between (P.char '<') (P.char '>') parseName
+        parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
+        charList = ",<>*()" :: [Char]
+    checkFstatSlotLength fStatType slots =
+        let n = length slots
+        in  case fStatType of
+                F4         -> n == 4
+                F3         -> n == 3
+                F2         -> n == 2
+                FST        -> n == 2
+                PWM        -> n == 2
+                Het        -> n == 1
+                F3vanilla  -> n == 2
+                FSTvanilla -> n == 2
+                F2vanilla  -> n == 2
 
 buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> ([FStat], FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs =
-    let getI = conformingEntityIndices
-        i = indInfo
-        fStatsBasic = do
-            fStatSpec <- fStatSpecs
-            case fStatSpec of
-                F4Spec         a b c d -> return $ F4         (getI [a] i) (getI [b] i) (getI [c] i) (getI [d] i)
-                F3Spec         a b c   -> return $ F3         (getI [a] i) (getI [b] i) (getI [c] i)
-                F2Spec         a b     -> return $ F2         (getI [a] i) (getI [b] i)
-                PWMspec        a b     -> return $ PWM        (getI [a] i) (getI [b] i)
-                HetSpec        a       -> return $ Het        (getI [a] i)
-                FSTspec        a b     -> return $ FST        (getI [a] i) (getI [b] i)
-                F3vanillaSpec  a b c   -> return $ F3vanilla  (getI [a] i) (getI [b] i) (getI [c] i)
-                F2vanillaSpec  a b     -> return $ F2vanilla  (getI [a] i) (getI [b] i)
-                FSTvanillaSpec a b     -> return $ FST        (getI [a] i) (getI [b] i)
-        additionalHetStats = [Het cI | F3 _ _ cI <- fStatsBasic]
+    let getI = (flip conformingEntityIndices) indInfo . return
+        fStatsBasic = [FStat t (map getI slots) | FStatSpec t slots <- fStatSpecs]
+        additionalHetStats = [FStat Het [cI] | FStat F3 [_, _, cI] <- fStatsBasic]
         fStatsAll = fStatsBasic ++ additionalHetStats
         n = length fStatsAll
     in  (fStatsAll, FoldM (step fStatsAll) (initialize n) extract)
@@ -180,21 +160,22 @@ buildStatSpecsFold indInfo fStatSpecs =
         return $ BlockData startPos endPos count statVals
 
 computeFStat :: FStat -> GenoLine -> Maybe Double
-computeFStat fStat gL =
+computeFStat (FStat fType indices) gL =
     let caf = computeAlleleFreq
         cac gL' i = case computeAlleleCount gL' i of
             (_, 0) -> Nothing
             x      -> Just x
-    in  case fStat of
-            F4         aI bI cI dI -> computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
-            F3vanilla  aI bI cI    -> computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
-            F2vanilla  aI bI       -> computeF2vanilla  <$> caf gL aI <*> caf gL bI
-            FSTvanilla aI bI       -> computeFSTvanilla <$> caf gL aI <*> caf gL bI
-            PWM        aI bI       -> computePWM        <$> caf gL aI <*> caf gL bI
-            F3         aI bI cI    -> computeF3         <$> caf gL aI <*> caf gL bI <*> cac gL cI
-            Het        aI          -> computeHet        <$> cac gL aI
-            F2         aI bI       -> computeF2         <$> cac gL aI <*> cac gL bI
-            FST        aI bI       -> computeFST        (cac gL aI) (cac gL bI)
+    in  case (fType, indices) of
+            (F4,         [aI, bI, cI, dI]) -> computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
+            (F3vanilla,  [aI, bI, cI])     -> computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
+            (F2vanilla,  [aI, bI])         -> computeF2vanilla  <$> caf gL aI <*> caf gL bI
+            (FSTvanilla, [aI, bI])         -> computeFSTvanilla <$> caf gL aI <*> caf gL bI
+            (PWM,        [aI, bI])         -> computePWM        <$> caf gL aI <*> caf gL bI
+            (F3,         [aI, bI, cI])     -> computeF3         <$> caf gL aI <*> caf gL bI <*> cac gL cI
+            (Het,        [aI])             -> computeHet        <$> cac gL aI
+            (F2,         [aI, bI])         -> computeF2         <$> cac gL aI <*> cac gL bI
+            (FST,        [aI, bI])         -> computeFST        (cac gL aI) (cac gL bI)
+            _ -> error "should never happen"
   where
     -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
     computeF4         a b c d = (a - b) * (c - d)
@@ -260,7 +241,7 @@ runFstats opts = do
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
                 let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
                 purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-            let jackknifeEstimates = processBlocks statSpecs fStats blocks
+            let jackknifeEstimates = processBlocks fStats blocks
             let colSpecs = replicate 4 (column expand def def def)
                 tableH = ["Statistic", "Estimate", "StdErr", "Z score"]
                 tableB = do
@@ -296,26 +277,14 @@ readStatSpecsFromFile statSpecsFile = do
         Right r  -> return r
 
 collectStatSpecGroups :: [FStatSpec] -> [PoseidonEntity]
-collectStatSpecGroups statSpecs = nub . concat $ do
-    stat <- statSpecs
-    case stat of
-        F4Spec         a b c d -> return [a, b, c, d]
-        F3Spec         a b c   -> return [a, b, c]
-        F2Spec         a b     -> return [a, b]
-        PWMspec        a b     -> return [a, b]
-        HetSpec        a       -> return [a]
-        FSTspec        a b     -> return [a, b]
-        F3vanillaSpec  a b c   -> return [a, b, c]
-        F2vanillaSpec  a b     -> return [a, b]
-        FSTvanillaSpec a b     -> return [a, b]
+collectStatSpecGroups statSpecs = nub $ concat [slots | FStatSpec _ slots <- statSpecs]
 
-processBlocks :: [FStatSpec] -> [FStat] -> [BlockData] -> [(Double, Double)]
-processBlocks statSpecs stats blocks = do
-    (i, statSpec, stat) <- zip3 [0..] statSpecs stats
-    case statSpec of
-        F3Spec {} ->
-            let F3 _ _ cI = stat
-                relatedHetIndex = case elemIndex (Het cI) stats of
+processBlocks :: [FStat] -> [BlockData] -> [(Double, Double)]
+processBlocks stats blocks = do
+    (i, stat) <- zip [0..] stats
+    case stat of
+        FStat F3 [_, _, cI] ->
+            let relatedHetIndex = case elemIndex (FStat Het [cI]) stats of
                     Nothing -> error "should never happen, cannot find related het-statistics for F3 stat"
                     Just j -> j
                 numerator_values = map ((!!i) . blockStatVal) blocks
