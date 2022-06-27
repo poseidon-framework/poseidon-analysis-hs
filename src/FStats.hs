@@ -67,39 +67,17 @@ data FstatsOptions = FstatsOptions
     , _foTableOut        :: Maybe FilePath
     }
 
+data FStatType = F4 | F3 | F2 | PWM | Het | FST | F3vanilla | F2vanilla | FSTvanilla
+    deriving (Show, Read)
+
 -- | A datatype to represent Summary Statistics to be computed from genotype data.
-data FStatSpec = F4Spec PoseidonEntity PoseidonEntity PoseidonEntity PoseidonEntity
-    | F3Spec PoseidonEntity PoseidonEntity PoseidonEntity
-    | F2Spec PoseidonEntity PoseidonEntity
-    | PWMspec PoseidonEntity PoseidonEntity
-    | HetSpec PoseidonEntity
-    | FSTspec PoseidonEntity PoseidonEntity
-    | F3vanillaSpec PoseidonEntity PoseidonEntity PoseidonEntity
-    | F2vanillaSpec PoseidonEntity PoseidonEntity
-    | FSTvanillaSpec PoseidonEntity PoseidonEntity
-    deriving (Eq)
+data FStatSpec = FStatSpec FStatType [PoseidonEntity] deriving (Eq)
 
 instance Show FStatSpec where
-    show (F4Spec         a b c d) = "F4("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ "," ++ show d ++ ")"
-    show (F3Spec         a b c  ) = "F3("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
-    show (F2Spec         a b    ) = "F2("  ++ show a ++ "," ++ show b ++ ")"
-    show (PWMspec        a b    ) = "PWM(" ++ show a ++ "," ++ show b ++ ")"
-    show (HetSpec        a      ) = "Het(" ++ show a ++ ")"
-    show (FSTspec        a b    ) = "FST(" ++ show a ++ "," ++ show b ++ ")"
-    show (F3vanillaSpec  a b c  ) = "F3vanilla("  ++ show a ++ "," ++ show b ++ "," ++ show c ++ ")"
-    show (F2vanillaSpec  a b    ) = "F2vanilla("  ++ show a ++ "," ++ show b ++ ")"
-    show (FSTvanillaSpec a b    ) = "FSTvanilla(" ++ show a ++ "," ++ show b ++ ")"
+    show (FStatSpec type slots) = show type ++ "("  ++ intercalate "," (map show slots) ++ ")"
 
 -- | An internal datatype to represent Summary statistics with indices of individuals given as integers
-data FStat = F4         [Int] [Int] [Int] [Int]
-           | F3         [Int] [Int] [Int]
-           | F2         [Int] [Int]
-           | PWM        [Int] [Int]
-           | Het        [Int]
-           | FST        [Int] [Int]
-           | F3vanilla  [Int] [Int] [Int]
-           | F2vanilla  [Int] [Int]
-           | FSTvanilla [Int] [Int] deriving (Show, Eq)
+data FStat = FStat FStatType [[Int]] deriving (Eq)
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
@@ -111,12 +89,12 @@ data BlockData = BlockData
 
 -- | A parser to parse Summary Statistic specifications.
 fStatSpecParser :: P.Parser FStatSpec
-fStatSpecParser = P.try f4SpecParser <|> P.try f3SpecParser <|> P.try f2SpecParser <|> P.try pwmSpecParser <|>
-    P.try hetSpecParser <|>
-    P.try fstSpecParser <|> P.try f3VanillaSpecParser <|> P.try f2VanillaSpecParser <|> fstVanillaSpecParser
-  where
-    f4SpecParser = do
-        _ <- P.string "F4"
+fStatSpecParser = do
+        typeStr <- P.satisfy (\c -> c /= '(')
+        type <- case readMaybe typeStr of
+            Just t -> return t
+            Nothing -> fail $ "Cannot parse Statistic type " ++ typeStr ++
+                ". Must be one of F4, F3, F2, FST, PWM, Het, F3vanilla, FSTvanilla"
         [a, b, c, d] <- P.between (P.char '(') (P.char ')') (popSpecsNparser 4)
         return $ F4Spec a b c d
     f3SpecParser = do
