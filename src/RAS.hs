@@ -2,14 +2,15 @@
 
 module RAS where
 
-import           Utils                               (GenomPos, GroupDef,
+import           Utils                               (GenomPos,
                                                       JackknifeMode (..),
-                                                      PopConfig (..),
                                                       XerxesException (..),
                                                       computeAlleleCount,
                                                       computeAlleleFreq,
                                                       computeJackknifeAdditive,
-                                                      computeJackknifeOriginal)
+                                                      computeJackknifeOriginal,
+                                                      GroupDef)
+import RASconfig (PopConfig(..))
 
 import           Control.Exception                   (throwIO)
 import           Control.Foldl                       (FoldM (..), impurely,

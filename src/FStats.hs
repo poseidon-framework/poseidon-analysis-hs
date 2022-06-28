@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module FStats (
       FStatSpec(..)
     , P.ParseError
@@ -11,7 +13,8 @@ module FStats (
 import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleCount,
                                               computeAlleleFreq,
-                                              computeJackknifeOriginal)
+                                              computeJackknifeOriginal,
+                                              GroupDef)
 
 import           Control.Applicative         ((<|>))
 import           Control.Exception           (throwIO)
@@ -66,7 +69,8 @@ data FstatsOptions = FstatsOptions
     , _foStatSpecsDirect :: [FStatSpec] -- ^ A list of F-statistics to compute
     -- ^ a file listing F-statistics to compute
     , _foStatSpecsFile   :: Maybe FilePath -- ^ a file listing F-statistics to compute
-    -- ^ whether to output the result table in raw TSV instead of nicely formatted ASCII table/
+    -- ^ output the result table in raw TSV in addition to the stdout
+    , _foStatSpecConfig  :: Maybe FilePath
     , _foMaxSnps         :: Maybe Int
     , _foTableOut        :: Maybe FilePath
     }
@@ -74,9 +78,6 @@ data FstatsOptions = FstatsOptions
 -- | A datatype to represent different types of F-Statistics
 data FStatType = F4 | F3 | F2 | PWM | Het | FST | F3vanilla | F2vanilla | FSTvanilla
     deriving (Show, Read, Eq)
-
--- | A datatype to represent F-Statistics to be computed from genotype data.
-data FStatSpec = FStatSpec FStatType [PoseidonEntity] (Maybe AscertainmentSpec) deriving (Eq, Show)
 
 -- | An internal datatype to represent Summary statistics with indices of individuals given as integers, and ascertainment information
 data FStat = FStat {
@@ -87,14 +88,6 @@ data FStat = FStat {
     _ascLower :: Double,
     _ascUpper :: Double
 } deriving (Eq)
-
-data AscertainmentSpec = AscertainmentSpec {
-    ascOutgroupSpec  :: Maybe PoseidonEntity, -- Here, a Nothing denotes that minor allele frequency in ascRefgroup should be used, 
-                                         --otherwise use derived allele frequencies in the ref-group, where the ancestral allele is given by the outgroup
-    ascRefgroupSpec  :: PoseidonEntity,
-    ascLowerFreqSpec :: Double,
-    ascUpperFreqSpec :: Double
-} deriving (Show, Eq)
 
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
@@ -113,6 +106,73 @@ data BlockAccumulator = BlockAccumulator {
     accValues :: V.Vector (VUM.IOVector Double) -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
         -- the outer vector is boxed and immutable, the inner vector is unboxed and mutable, so that values can be updated as we loop through the data.
 }
+
+-- | The main function running the FStats command.
+runFstats :: FstatsOptions -> IO ()
+runFstats opts = do
+    -- load packages --
+    allPackages <- readPoseidonPackageCollection pacReadOpts (_foBaseDirs opts)
+    statSpecsFromFile <- case _foStatSpecsFile opts of
+        Nothing -> return []
+        Just f  -> readStatSpecsFromFile f
+
+    (groupDefs, statSpecsFromConfig) <- case _foStatSpecConfig opts of
+        Nothing -> ([], [])
+        Just fn -> input auto fn
+
+    let statSpecs = statSpecsFromFile ++ _foStatSpecsDirect opts
+    if null statSpecs then
+        hPutStrLn stderr "No statistics to be computed"
+    else do
+        let collectedStats = collectStatSpecGroups statSpecs
+        let missingEntities = findNonExistentEntities collectedStats (getJointIndividualInfo allPackages)
+        if not. null $ missingEntities then
+            hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+        else do
+            let relevantPackages = filterRelevantPackages collectedStats allPackages
+            hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+            forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
+            hPutStrLn stderr $ "Computing stats:"
+            mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
+            let jointIndInfo = getJointIndividualInfo relevantPackages
+            (fStats, blocks) <- runSafeT $ do
+                (fStats, statsFold) <- buildStatSpecsFold jointIndInfo statSpecs
+                (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+                let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
+                    eigenstratProdInChunks = case _foJackknifeMode opts of
+                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+                let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
+                blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+                return (fStats, blocks)
+            let jackknifeEstimates = processBlocks fStats blocks
+            let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length fStats - 1)]]
+            let colSpecs = replicate 11 (column expand def def def)
+                tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+                tableB = do
+                    (fstat, (estimate, stderr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
+                    let FStatSpec fType slots maybeAsc = fstat
+                        abcdStr = take 4 (map show slots ++ repeat "")
+                        (asc1, asc2) = case maybeAsc of
+                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
+                            Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
+                            _ -> ("n/a", "n/a")
+                    return $ [show fType] ++ abcdStr ++ [show (round nrSites), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stderr, show (estimate / stderr)]
+            putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+            case _foTableOut opts of
+                Nothing -> return ()
+                Just outFn -> withFile outFn WriteMode $ \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
+  where
+    chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
+    capNrSnps Nothing  = cat
+    capNrSnps (Just n) = P.take n
+    chunkEigenstratByChromosome = view (groupsBy sameChrom)
+    sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
+        chrom1 == chrom2
+    chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
+    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+
 
 summaryPrintFstats :: FStatSpec -> String
 summaryPrintFstats (FStatSpec fType slots maybeAsc) =
@@ -288,67 +348,6 @@ pacReadOpts = defaultPackageReadOptions {
     , _readOptIgnoreGeno       = False
     , _readOptGenoCheck        = True
     }
-
--- | The main function running the FStats command.
-runFstats :: FstatsOptions -> IO ()
-runFstats opts = do
-    -- load packages --
-    allPackages <- readPoseidonPackageCollection pacReadOpts (_foBaseDirs opts)
-    statSpecsFromFile <- case _foStatSpecsFile opts of
-        Nothing -> return []
-        Just f  -> readStatSpecsFromFile f
-    let statSpecs = statSpecsFromFile ++ _foStatSpecsDirect opts
-    if null statSpecs then
-        hPutStrLn stderr "No statistics to be computed"
-    else do
-        let collectedStats = collectStatSpecGroups statSpecs
-        let missingEntities = findNonExistentEntities collectedStats (getJointIndividualInfo allPackages)
-        if not. null $ missingEntities then
-            hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
-        else do
-            let relevantPackages = filterRelevantPackages collectedStats allPackages
-            hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-            forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
-            hPutStrLn stderr $ "Computing stats:"
-            mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
-            let jointIndInfo = getJointIndividualInfo relevantPackages
-            (fStats, blocks) <- runSafeT $ do
-                (fStats, statsFold) <- buildStatSpecsFold jointIndInfo statSpecs
-                (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-                let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
-                    eigenstratProdInChunks = case _foJackknifeMode opts of
-                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-                let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-                blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-                return (fStats, blocks)
-            let jackknifeEstimates = processBlocks fStats blocks
-            let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length fStats - 1)]]
-            let colSpecs = replicate 11 (column expand def def def)
-                tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
-                tableB = do
-                    (fstat, (estimate, stderr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
-                    let FStatSpec fType slots maybeAsc = fstat
-                        abcdStr = take 4 (map show slots ++ repeat "")
-                        (asc1, asc2) = case maybeAsc of
-                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
-                            Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
-                            _ -> ("n/a", "n/a")
-                    return $ [show fType] ++ abcdStr ++ [show (round nrSites), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stderr, show (estimate / stderr)]
-            putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
-            case _foTableOut opts of
-                Nothing -> return ()
-                Just outFn -> withFile outFn WriteMode $ \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
-  where
-    chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
-    capNrSnps Nothing  = cat
-    capNrSnps (Just n) = P.take n
-    chunkEigenstratByChromosome = view (groupsBy sameChrom)
-    sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
-        chrom1 == chrom2
-    chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
-    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
-        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
 
 readStatSpecsFromFile :: FilePath -> IO [FStatSpec]
 readStatSpecsFromFile statSpecsFile = do

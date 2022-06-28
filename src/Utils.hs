@@ -1,24 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Utils (JackknifeMode(..), GenomPos, popSpecsNparser, computeAlleleFreq, computeAlleleCount,
-computeJackknifeAdditive, computeJackknifeOriginal, P.runParser, PopConfig(..), GroupDef, XerxesException(..)) where
+module Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
-import           Control.Monad              (forM)
-import           Data.Aeson                 (FromJSON, Object, parseJSON,
-                                             withObject, (.:), (.:?))
-import           Data.Aeson.Types           (Parser)
 import           Data.Char                  (isSpace)
-import           Data.HashMap.Strict        (toList)
 import qualified Data.Vector                as V
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 
-import           Data.Text                  (Text)
-import           Poseidon.EntitiesList      (EntitiesList, PoseidonEntity (..),
-                                             SignedEntitiesList, entitiesListP,
-                                             entitySpecParser)
+import           Poseidon.EntitiesList      (PoseidonEntity (..), SignedEntitiesList)
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
 
@@ -30,6 +21,9 @@ data JackknifeMode = JackknifePerN Int
 -- | A helper type to represent a genomic position.
 type GenomPos = (Chrom, Int)
 
+type GroupDef = (String, SignedEntitiesList)
+
+
 customEntitySpecParser :: P.Parser PoseidonEntity
 customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
     where
@@ -39,7 +33,6 @@ customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
     charList :: [Char]
     charList = ",<>*()"
     parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
-
 
 popSpecsNparser :: Int -> P.Parser [PoseidonEntity]
 popSpecsNparser n = sepByNparser n customEntitySpecParser (P.char ',' <* P.spaces)
@@ -94,50 +87,6 @@ computeJackknifeAdditive weights values =
         theta       = sum [mj * val | (mj, val) <- zip weights' values] / sumWeights
         sigmaSquare = sum [mj * (val - theta) ^ (2 :: Int) / (sumWeights - mj) | (mj, val) <- zip weights' values] / g
     in  (theta, sqrt sigmaSquare)
-
-
-
-type GroupDef = (String, SignedEntitiesList)
-
-data PopConfig = PopConfigYamlStruct
-    { popConfigGroupDef :: [GroupDef]
-    , popConfigLefts    :: EntitiesList
-    , popConfigRights   :: EntitiesList
-    , popConfigOutgroup :: Maybe PoseidonEntity
-    }
-
-instance FromJSON PopConfig where
-    parseJSON = withObject "PopConfigYamlStruct" $ \v -> PopConfigYamlStruct
-        <$> parseGroupDefsFromJSON v
-        <*> parsePopSpecsFromJSON v "popLefts"
-        <*> parsePopSpecsFromJSON v "popRights"
-        <*> parseMaybePopSpecFromJSON v "outgroup"
-      where
-        parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
-        parseGroupDefsFromJSON v = do
-            maybeObj <- v .:? "groupDefs"
-            case maybeObj of
-                Nothing -> return []
-                Just obj -> return $ do
-                    (key, value) <- toList obj
-                    case P.runParser entitiesListP () "" value of
-                        Left err -> fail (show err)
-                        Right p  -> return (key, p)
-        parsePopSpecsFromJSON :: Object -> Text -> Parser [PoseidonEntity]
-        parsePopSpecsFromJSON v label = do
-            popDefStrings <- v .: label
-            forM popDefStrings $ \popDefString -> do
-                case P.runParser entitySpecParser () "" popDefString of
-                    Left err -> fail (show err)
-                    Right p  -> return p
-        parseMaybePopSpecFromJSON :: Object -> Text -> Parser (Maybe PoseidonEntity)
-        parseMaybePopSpecFromJSON v label = do
-            maybePopDefString <- v .:? label
-            case maybePopDefString of
-                Nothing -> return Nothing
-                Just p -> case P.runParser entitySpecParser () "" p of
-                    Left err -> fail (show err)
-                    Right p' -> return (Just p')
 
 data XerxesException = PopConfigYamlException FilePath String
     | GroupDefException String
