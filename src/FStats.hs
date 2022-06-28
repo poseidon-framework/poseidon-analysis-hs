@@ -166,16 +166,21 @@ buildStatSpecsFold indInfo fStatSpecs = do
                     Nothing -> ([], [], 0.0, 1.0)
                     Just (AscertainmentSpec ogE refE lo' up') -> (maybe [] getI ogE, getI refE, lo', up')
             return $ FStat t (map getI slots) ascOG ascRef lo up
-    blockAccum <- initialize fStats
-    return $ (fStats, FoldM (step fStats blockAccum) (return ()) (extract blockAccum))
+    blockAccum <- do
+        listOfInnerVectors <- forM fStats $ \(FStat fType _ _ _ _ _) -> do
+            case fType of
+                F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.      
+        liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
+    return $ (fStats, FoldM (step fStats blockAccum) (initialize blockAccum) (extract blockAccum))
   where
     step :: (MonadIO m) => [FStat] -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
     step fStats blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         -- this function is called for every SNP.
         startPos <- liftIO $ readIORef (accMaybeStartPos blockAccum)
         case startPos of
-            Nothing       -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
-            Just _ -> return ()
+            Nothing -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
+            Just _  -> return ()
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
         forM_ (zip [0..] fStats) $ \(i, fstat) -> do
             -- loop over all statistics
@@ -187,13 +192,13 @@ buildStatSpecsFold indInfo fStatSpecs = do
         -- counts the number of SNPs in a block, and ignores missing data. Missing data is considered within each accumulator.
         liftIO $ modifyIORef' (accCount blockAccum) (+1)
         return ()
-    initialize :: (MonadIO m) => [FStat] -> m BlockAccumulator
-    initialize fStats = do
-        listOfInnerVectors <- forM fStats $ \(FStat fType _ _ _ _ _) -> do
-            case fType of
-                F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
-                _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.      
-        liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
+    initialize :: (MonadIO m) => BlockAccumulator -> m ()
+    initialize (BlockAccumulator startRef endRef countRef valVec) = do
+        liftIO $ writeIORef startRef Nothing
+        liftIO $ writeIORef endRef Nothing
+        liftIO $ writeIORef countRef 0
+        forM_ (V.toList valVec) $ \vals -> do
+            liftIO $ VUM.set vals 0.0
     extract :: (MonadIO m) => BlockAccumulator -> () -> m BlockData
     extract (BlockAccumulator maybeStartPosRef maybeEndPosRef countRef valVec) _ = do
         maybeStartPos <- liftIO $ readIORef maybeStartPosRef
@@ -238,7 +243,7 @@ computeFStatAccumulators (FStat fType indices ascOgI ascRefI ascLo ascHi) gL =
             (FSTvanilla, [aI, bI])         -> retWithNormAcc $ (computeFSTvanilla    (caf aI)   (caf bI))                      >>= applyAsc
             (FST,        [aI, bI])         -> retWithNormAcc $ (computeFST           (cac aI)   (cac bI))                      >>= applyAsc
             (F3,         [aI, bI, cI])     ->
-                retWithNormAcc ((computeF3noNorm   <$> caf aI <*> caf bI <*> cac cI) >>= applyAsc) ++
+                retWithNormAcc ((computeF3noNorm <$> caf aI <*> caf bI <*> cac cI) >>= applyAsc) ++
                 retWithNormAcc ((computeHet <$> cac cI) >>= applyAsc)
             _ -> error "should never happen"
   where
@@ -318,17 +323,18 @@ runFstats opts = do
                 blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
                 return (fStats, blocks)
             let jackknifeEstimates = processBlocks fStats blocks
-            let colSpecs = replicate 10 (column expand def def def)
-                tableH = ["Statistic", "a", "b", "c", "d", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+            let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length fStats - 1)]]
+            let colSpecs = replicate 11 (column expand def def def)
+                tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
                 tableB = do
-                    (fstat, result) <- zip statSpecs jackknifeEstimates
+                    (fstat, (estimate, stderr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
                     let FStatSpec fType slots maybeAsc = fstat
                         abcdStr = take 4 (map show slots ++ repeat "")
                         (asc1, asc2) = case maybeAsc of
                             Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
                             Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
                             _ -> ("n/a", "n/a")
-                    return $ [show fType] ++ abcdStr ++ [asc1, asc2] ++ [printf "%.4g" (fst result), printf "%.4g" (snd result), show (uncurry (/) result)]
+                    return $ [show fType] ++ abcdStr ++ [show (round nrSites), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stderr, show (estimate / stderr)]
             putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
             case _foTableOut opts of
                 Nothing -> return ()
