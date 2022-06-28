@@ -21,7 +21,7 @@ import           Control.Monad               (forM_, when, forM)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import           Data.Char                   (isSpace)
 import           Data.IORef                  (IORef, newIORef, writeIORef,
-                                              modifyIORef, readIORef)
+                                              modifyIORef', readIORef)
 import           Data.List                   (intercalate, nub)
 import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
@@ -185,7 +185,7 @@ buildStatSpecsFold indInfo fStatSpecs = do
                     Nothing -> return ()
                     Just x -> liftIO $ VUM.modify (accValues blockAccum V.! i) (+x) j -- add the value to the respective accumulator.
         -- counts the number of SNPs in a block, and ignores missing data. Missing data is considered within each accumulator.
-        liftIO $ modifyIORef (accCount blockAccum) (+1)
+        liftIO $ modifyIORef' (accCount blockAccum) (+1)
         return ()
     initialize :: (MonadIO m) => [FStat] -> m BlockAccumulator
     initialize fStats = do
