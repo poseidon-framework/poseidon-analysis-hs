@@ -207,26 +207,43 @@ buildStatSpecsFold indInfo fStatSpecs = do
 -- TODO: Currently ignores ascertainment!
 computeFStatAccumulators :: FStat -> GenoLine -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
 -- but in case of F3, for example, also a second accumulator capturing the heterozygosity
-computeFStatAccumulators (FStat fType indices _ _ _ _) gL =
-    let caf = computeAlleleFreq -- this returns Nothing if missing data
-        cac gL' i = case computeAlleleCount gL' i of -- this also returns Nothing if missing data.
+computeFStatAccumulators (FStat fType indices ascOgI ascRefI ascLo ascHi) gL =
+    let caf = computeAlleleFreq gL -- this returns Nothing if missing data
+        cac i = case computeAlleleCount gL i of -- this also returns Nothing if missing data.
             (_, 0) -> Nothing
             x      -> Just x
+        ascCond = 
+            if null ascRefI then
+                return True
+            else do -- Maybe Monad - if any of the required allele frequencies are missing, this returns a Nothing
+                let ascRefX = caf ascRefI
+                ascFreq <- if null ascOgI then do
+                        x <- ascRefX
+                        if x > 0.5 then return (1.0 - x) else return x -- use minor allele frequency if no outgroup is given
+                    else do -- Maybe Monad
+                        ogX <- caf ascOgI
+                        x <- ascRefX
+                        if (ogX < 0.5) then return x else return (1.0 - x)
+                return $ ascFreq >= ascLo && ascFreq <= ascHi
+        applyAsc x = do -- Maybe Monad
+            cond <- ascCond
+            if cond then return x else return 0.0
     in  case (fType, indices) of
-            (F4,         [aI, bI, cI, dI]) -> retWithNormAcc $ computeF4         <$> caf gL aI <*> caf gL bI <*> caf gL cI <*> caf gL dI
-            (F3vanilla,  [aI, bI, cI])     -> retWithNormAcc $ computeF3vanilla  <$> caf gL aI <*> caf gL bI <*> caf gL cI
-            (F2vanilla,  [aI, bI])         -> retWithNormAcc $ computeF2vanilla  <$> caf gL aI <*> caf gL bI
-            (PWM,        [aI, bI])         -> retWithNormAcc $ computePWM        <$> caf gL aI <*> caf gL bI
-            (Het,        [aI])             -> retWithNormAcc $ computeHet        <$> cac gL aI
-            (F2,         [aI, bI])         -> retWithNormAcc $ computeF2         <$> cac gL aI <*> cac gL bI
-            (F3,         [aI, bI, cI])     -> retWithNormAcc  (computeF3noNorm   <$> caf gL aI <*> caf gL bI <*> cac gL cI) ++ retWithNormAcc (computeHet <$> cac gL cI)
-            (FSTvanilla, [aI, bI])         -> retWithNormAcc $ computeFSTvanilla    (caf gL aI)   (caf gL bI)
-            (FST,        [aI, bI])         -> retWithNormAcc $ computeFST           (cac gL aI)   (cac gL bI)
+            (F4,         [aI, bI, cI, dI]) -> retWithNormAcc $ (computeF4         <$> caf aI <*> caf bI <*> caf cI <*> caf dI) >>= applyAsc
+            (F3vanilla,  [aI, bI, cI])     -> retWithNormAcc $ (computeF3vanilla  <$> caf aI <*> caf bI <*> caf cI)            >>= applyAsc
+            (F2vanilla,  [aI, bI])         -> retWithNormAcc $ (computeF2vanilla  <$> caf aI <*> caf bI)                       >>= applyAsc
+            (PWM,        [aI, bI])         -> retWithNormAcc $ (computePWM        <$> caf aI <*> caf bI)                       >>= applyAsc
+            (Het,        [aI])             -> retWithNormAcc $ (computeHet        <$> cac aI)                                  >>= applyAsc
+            (F2,         [aI, bI])         -> retWithNormAcc $ (computeF2         <$> cac aI <*> cac bI)                       >>= applyAsc
+            (FSTvanilla, [aI, bI])         -> retWithNormAcc $ (computeFSTvanilla    (caf aI)   (caf bI))                      >>= applyAsc
+            (FST,        [aI, bI])         -> retWithNormAcc $ (computeFST           (cac aI)   (cac bI))                      >>= applyAsc
+            (F3,         [aI, bI, cI])     ->
+                retWithNormAcc ((computeF3noNorm   <$> caf aI <*> caf bI <*> cac cI) >>= applyAsc) ++
+                retWithNormAcc ((computeHet <$> cac cI) >>= applyAsc)
             _ -> error "should never happen"
   where
     retWithNormAcc (Just x) = [Just x, Just 1.0]
     retWithNormAcc Nothing = [Nothing, Nothing]
-    
     -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
     computeF4         a b c d = (a - b) * (c - d)
     computeF3vanilla  a b c   = (c - a) * (c - b)
