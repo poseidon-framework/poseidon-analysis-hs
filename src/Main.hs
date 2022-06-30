@@ -118,7 +118,7 @@ parseFstatInput = OP.some (parseStatSpecsDirect <|> parseYamlInput <|> parseSimp
             \Poseidon package title. You can mix entity types, like in \
             \\"F4(<Ind1>,Group2,*Pac*,<Ind4>)\". Group or individual names are separated by commas, and a comma \
             \can be followed by any number of spaces.")
-    parseYamlInput = OP.option (FStatInputYaml <$> OP.str) (OP.long "Specify a yaml file for the Fstatistics and group configurations")
+    parseYamlInput = OP.option (FStatInputYaml <$> OP.str) (OP.long "statConfig" <> OP.help "Specify a yaml file for the Fstatistics and group configurations")
     parseSimpleText = OP.option (FStatInputSimpleText <$> OP.str) (OP.long "statFile" <> OP.help "Specify a file with F-Statistics specified \
     \similarly as specified for option --stat. One line per statistics, and no new-line at the end")
     readStatSpecString s = case runParser fStatSpecParser () "" s of

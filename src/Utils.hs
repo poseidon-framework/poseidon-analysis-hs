@@ -4,15 +4,16 @@ module Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
-import           Data.Aeson.Types           (Parser, Object, Value(..))
+import Control.Monad (forM)
+import           Data.Aeson                 ((.:))
+import           Data.Aeson.Types           (Object, Parser, Value (..))
 import           Data.Char                  (isSpace)
 import           Data.HashMap.Strict        (toList)
-import Data.Text (unpack)
+import           Data.Text                  (unpack)
 import qualified Data.Vector                as V
 import           Poseidon.EntitiesList      (PoseidonEntity (..),
-                                             SignedEntitiesList,
-                                             indInfoConformsToEntitySpec,
-                                             entitiesListP)
+                                             SignedEntitiesList, entitiesListP,
+                                             indInfoConformsToEntitySpec)
 import           Poseidon.SecondaryTypes    (IndividualInfo (..))
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
@@ -39,12 +40,9 @@ addGroupDefs groupDefs indInfoRows = do
     return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
 parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
-parseGroupDefsFromJSON obj = return $ do
-    (key, String str) <- toList obj
-    case P.runParser entitiesListP () "" (unpack str) of
-        Left err -> fail (show err)
-        Right p  -> return (unpack key, p)
-
+parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, val) -> do
+    entities <- obj .: key
+    return (unpack key, entities)
 
 customEntitySpecParser :: P.Parser PoseidonEntity
 customEntitySpecParser = parsePac <|> parseGroup <|> parseInd

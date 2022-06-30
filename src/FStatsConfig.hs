@@ -59,9 +59,9 @@ instance FromJSON MultiFStatSpec where
     parseJSON = withObject "fstats" $ \v -> MultiFStatSpec
         <$> v .:  "type"
         <*> v .:  "a"
-        <*> v .:  "b"
-        <*> v .:  "c"
-        <*> v .:  "d"
+        <*> ((v .:? "b") >>= maybe (return []) return)
+        <*> ((v .:? "c") >>= maybe (return []) return)
+        <*> ((v .:? "d") >>= maybe (return []) return)
         <*> v .:? "ascertainment"
 
 instance FromJSON AscertainmentSpec where

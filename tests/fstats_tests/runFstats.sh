@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-stack run xerxes -- fstats --statFile fstats.txt -d ../../published_data/2012_PattersonGenetics -f testTable.txt
+# stack run xerxes -- fstats --statFile fstats.txt -d ../../published_data/2012_PattersonGenetics -f testTable.txt
+
+stack run xerxes -- fstats --stat "F2(French, Spanish)" --stat "PWM(Mbuti, Sardinian)" \
+  --statFile fstats.txt --statConfig config.yaml -d ../../../published_data/2012_PattersonGenetics
 
 # .---------------------------------.------------------------.-----------------------.---------------------.
 # |            Statistic            |        Estimate        |        StdErr         |       Z score       |

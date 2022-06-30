@@ -1,0 +1,19 @@
+groupDefs:
+  MyGroup1: ["French", "<Ind1>", "Spanish", "-<Ind2>"]
+  MyGroup2: ["<Ind1>", "<Ind2>", "<Ind3>"]
+fstats:
+- type: F3
+  a: ["French", "Spanish", "Mbuti"]
+  b: ["Han", "CEU"]
+  c: ["Chimp"]
+  ascertainment:
+    outgroup: "<Chimp>"
+    reference: "FIN"
+    lower: 0.05
+    upper: 0.95
+- type: F4
+  a: ["French", "Spanish", "Mbuti"]
+  b: ["Han", "CEU"]
+  c: ["Mbuti"]
+  d: ["Chimp"]
+

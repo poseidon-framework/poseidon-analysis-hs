@@ -106,6 +106,7 @@ runFstats opts = do
     -- load packages --
     allPackages <- readPoseidonPackageCollection pacReadOpts (_foBaseDirs opts)
     (groupDefs, statSpecs) <- readFstatInput (_foStatInput opts)
+    hPutStrLn stderr (show (groupDefs, statSpecs))
     unless (null groupDefs) $ hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
 
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file

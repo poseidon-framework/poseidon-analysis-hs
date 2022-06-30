@@ -20,4 +20,4 @@ instance FromJSON PopConfig where
         <$> (v .:? "groupDefs" >>= maybe (return []) parseGroupDefsFromJSON)
         <*> v .: "popLefts"
         <*> v .: "popRights"
-        <*> v .: "outgroup"
+        <*> v .:? "outgroup"
