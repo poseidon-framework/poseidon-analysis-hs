@@ -4,11 +4,11 @@ module Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
+import           Data.Aeson.Types           (Parser)
 import           Data.Char                  (isSpace)
 import qualified Data.Vector                as V
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
-
 import           Poseidon.EntitiesList      (PoseidonEntity (..), SignedEntitiesList)
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
@@ -22,6 +22,17 @@ data JackknifeMode = JackknifePerN Int
 type GenomPos = (Chrom, Int)
 
 type GroupDef = (String, SignedEntitiesList)
+
+parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
+parseGroupDefsFromJSON v = do
+    maybeObj <- v .:? "groupDefs"
+    case maybeObj of
+        Nothing -> return []
+        Just obj -> return $ do
+            (key, value) <- toList obj
+            case P.runParser entitiesListP () "" value of
+                Left err -> fail (show err)
+                Right p  -> return (key, p)
 
 
 customEntitySpecParser :: P.Parser PoseidonEntity

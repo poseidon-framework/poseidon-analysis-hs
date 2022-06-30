@@ -3,6 +3,7 @@
 module FStats (
       FStatSpec(..)
     , P.ParseError
+    , P.runParser
     , FstatsOptions(..)
     , JackknifeMode(..)
     , fStatSpecParser
@@ -15,6 +16,8 @@ import           Utils                       (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq,
                                               computeJackknifeOriginal,
                                               GroupDef)
+import FStatsConfig (FStatSpec(..), FStatType(..), FStatConfig(..), AscertainmentSpec(..), readFstatConfigDhall)
+
 
 import           Control.Applicative         ((<|>))
 import           Control.Exception           (throwIO)
@@ -50,7 +53,7 @@ import           Poseidon.Utils              (PoseidonException (..))
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..), GenoLine)
 import           SequenceFormats.Utils       (Chrom)
 import           System.IO                   (IOMode (..), hPutStrLn, stderr,
-                                              withFile)
+                                              withFile, hPrint)
 import           Text.Layout.Table           (asciiRoundS, column, def, expand,
                                               rowsG, tableString, titlesH)
 import qualified Text.Parsec                 as P
@@ -74,10 +77,6 @@ data FstatsOptions = FstatsOptions
     , _foMaxSnps         :: Maybe Int
     , _foTableOut        :: Maybe FilePath
     }
-
--- | A datatype to represent different types of F-Statistics
-data FStatType = F4 | F3 | F2 | PWM | Het | FST | F3vanilla | F2vanilla | FSTvanilla
-    deriving (Show, Read, Eq)
 
 -- | An internal datatype to represent Summary statistics with indices of individuals given as integers, and ascertainment information
 data FStat = FStat {
@@ -116,62 +115,65 @@ runFstats opts = do
         Nothing -> return []
         Just f  -> readStatSpecsFromFile f
 
-    (groupDefs, statSpecsFromConfig) <- case _foStatSpecConfig opts of
-        Nothing -> ([], [])
-        Just fn -> input auto fn
+    FStatConfig groupDefs fstats <- case _foStatSpecConfig opts of
+        Nothing -> return $ FStatConfig [] []
+        Just fn -> readFstatConfigDhall fn
 
-    let statSpecs = statSpecsFromFile ++ _foStatSpecsDirect opts
-    if null statSpecs then
-        hPutStrLn stderr "No statistics to be computed"
-    else do
-        let collectedStats = collectStatSpecGroups statSpecs
-        let missingEntities = findNonExistentEntities collectedStats (getJointIndividualInfo allPackages)
-        if not. null $ missingEntities then
-            hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
-        else do
-            let relevantPackages = filterRelevantPackages collectedStats allPackages
-            hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-            forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
-            hPutStrLn stderr $ "Computing stats:"
-            mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
-            let jointIndInfo = getJointIndividualInfo relevantPackages
-            (fStats, blocks) <- runSafeT $ do
-                (fStats, statsFold) <- buildStatSpecsFold jointIndInfo statSpecs
-                (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
-                let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
-                    eigenstratProdInChunks = case _foJackknifeMode opts of
-                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-                let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-                blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-                return (fStats, blocks)
-            let jackknifeEstimates = processBlocks fStats blocks
-            let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length fStats - 1)]]
-            let colSpecs = replicate 11 (column expand def def def)
-                tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
-                tableB = do
-                    (fstat, (estimate, stderr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
-                    let FStatSpec fType slots maybeAsc = fstat
-                        abcdStr = take 4 (map show slots ++ repeat "")
-                        (asc1, asc2) = case maybeAsc of
-                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
-                            Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
-                            _ -> ("n/a", "n/a")
-                    return $ [show fType] ++ abcdStr ++ [show (round nrSites), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stderr, show (estimate / stderr)]
-            putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
-            case _foTableOut opts of
-                Nothing -> return ()
-                Just outFn -> withFile outFn WriteMode $ \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
-  where
-    chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
-    capNrSnps Nothing  = cat
-    capNrSnps (Just n) = P.take n
-    chunkEigenstratByChromosome = view (groupsBy sameChrom)
-    sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
-        chrom1 == chrom2
-    chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
-    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
-        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+    hPutStrLn stderr "read Config:"
+    hPrint stderr (FStatConfig groupDefs fstats)
+
+--     let statSpecs = statSpecsFromFile ++ _foStatSpecsDirect opts
+--     if null statSpecs then
+--         hPutStrLn stderr "No statistics to be computed"
+--     else do
+--         let collectedStats = collectStatSpecGroups statSpecs
+--         let missingEntities = findNonExistentEntities collectedStats (getJointIndividualInfo allPackages)
+--         if not. null $ missingEntities then
+--             hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+--         else do
+--             let relevantPackages = filterRelevantPackages collectedStats allPackages
+--             hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+--             forM_ relevantPackages $ \pac -> hPutStrLn stderr (posPacTitle pac)
+--             hPutStrLn stderr $ "Computing stats:"
+--             mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
+--             let jointIndInfo = getJointIndividualInfo relevantPackages
+--             (fStats, blocks) <- runSafeT $ do
+--                 (fStats, statsFold) <- buildStatSpecsFold jointIndInfo statSpecs
+--                 (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+--                 let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
+--                     eigenstratProdInChunks = case _foJackknifeMode opts of
+--                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+--                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+--                 let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
+--                 blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+--                 return (fStats, blocks)
+--             let jackknifeEstimates = processBlocks fStats blocks
+--             let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length fStats - 1)]]
+--             let colSpecs = replicate 11 (column expand def def def)
+--                 tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+--                 tableB = do
+--                     (fstat, (estimate, stderr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
+--                     let FStatSpec fType slots maybeAsc = fstat
+--                         abcdStr = take 4 (map show slots ++ repeat "")
+--                         (asc1, asc2) = case maybeAsc of
+--                             Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
+--                             Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
+--                             _ -> ("n/a", "n/a")
+--                     return $ [show fType] ++ abcdStr ++ [show (round nrSites), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stderr, show (estimate / stderr)]
+--             putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+--             case _foTableOut opts of
+--                 Nothing -> return ()
+--                 Just outFn -> withFile outFn WriteMode $ \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
+--   where
+--     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
+--     capNrSnps Nothing  = cat
+--     capNrSnps (Just n) = P.take n
+--     chunkEigenstratByChromosome = view (groupsBy sameChrom)
+--     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
+--         chrom1 == chrom2
+--     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
+--     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+--         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
 
 
 summaryPrintFstats :: FStatSpec -> String

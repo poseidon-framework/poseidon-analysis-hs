@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import           FStats                     (FStatSpec (..), FstatsOptions (..),
-                                             fStatSpecParser, runFstats)
+                                             fStatSpecParser, runFstats, runParser)
 import           RAS                        (RASOptions (..), runRAS, FreqSpec(..))
-import           Utils                      (JackknifeMode (..), runParser)
+import           Utils                      (JackknifeMode (..))
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (catch)
@@ -77,6 +77,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseExcludeChroms
                                 <*> OP.many parseStatSpecsDirect
                                 <*> parseStatSpecsFromFile
+                                <*> parseFstatConfig
                                 <*> parseMaxSnps
                                 <*> parseTableOutFile
 
@@ -180,6 +181,9 @@ parseF4tableOutFile = OP.option (Just <$> OP.str) (OP.long "f4TableOutFile" <>
 parseBlockTableFile :: OP.Parser (Maybe FilePath)
 parseBlockTableFile = OP.option (Just <$> OP.str) (OP.long "blockTableFile" <>
     OP.help "a file to which the per-Block results are written as tab-separated file" <> OP.value Nothing)
+
+parseFstatConfig :: OP.Parser (Maybe FilePath)
+parseFstatConfig = OP.option (Just <$> OP.str) (OP.long "config" <> OP.help "Config file in Dhall" <> OP.value Nothing)
 
 parseMaxSnps :: OP.Parser (Maybe Int)
 parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>

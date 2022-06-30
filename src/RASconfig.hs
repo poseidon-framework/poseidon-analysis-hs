@@ -29,16 +29,6 @@ instance FromJSON PopConfig where
         <*> parsePopSpecsFromJSON v "popRights"
         <*> parseMaybePopSpecFromJSON v "outgroup"
       where
-        parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
-        parseGroupDefsFromJSON v = do
-            maybeObj <- v .:? "groupDefs"
-            case maybeObj of
-                Nothing -> return []
-                Just obj -> return $ do
-                    (key, value) <- toList obj
-                    case P.runParser entitiesListP () "" value of
-                        Left err -> fail (show err)
-                        Right p  -> return (key, p)
         parsePopSpecsFromJSON :: Object -> Text -> Parser [PoseidonEntity]
         parsePopSpecsFromJSON v label = do
             popDefStrings <- v .: label
