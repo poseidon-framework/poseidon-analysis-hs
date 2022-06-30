@@ -4,12 +4,18 @@ module Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
-import           Data.Aeson.Types           (Parser)
+import           Data.Aeson.Types           (Parser, Object, Value(..))
 import           Data.Char                  (isSpace)
+import           Data.HashMap.Strict        (toList)
+import Data.Text (unpack)
 import qualified Data.Vector                as V
+import           Poseidon.EntitiesList      (PoseidonEntity (..),
+                                             SignedEntitiesList,
+                                             indInfoConformsToEntitySpec,
+                                             entitiesListP)
+import           Poseidon.SecondaryTypes    (IndividualInfo (..))
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
-import           Poseidon.EntitiesList      (PoseidonEntity (..), SignedEntitiesList)
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
 
@@ -23,16 +29,21 @@ type GenomPos = (Chrom, Int)
 
 type GroupDef = (String, SignedEntitiesList)
 
+addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
+addGroupDefs groupDefs indInfoRows = do
+    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
+    let additionalGroupNames = do
+            (groupName, signedEntityList) <- groupDefs
+            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
+            return groupName
+    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
+
 parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
-parseGroupDefsFromJSON v = do
-    maybeObj <- v .:? "groupDefs"
-    case maybeObj of
-        Nothing -> return []
-        Just obj -> return $ do
-            (key, value) <- toList obj
-            case P.runParser entitiesListP () "" value of
-                Left err -> fail (show err)
-                Right p  -> return (key, p)
+parseGroupDefsFromJSON obj = return $ do
+    (key, String str) <- toList obj
+    case P.runParser entitiesListP () "" (unpack str) of
+        Left err -> fail (show err)
+        Right p  -> return (unpack key, p)
 
 
 customEntitySpecParser :: P.Parser PoseidonEntity
@@ -101,6 +112,7 @@ computeJackknifeAdditive weights values =
 
 data XerxesException = PopConfigYamlException FilePath String
     | GroupDefException String
+    | FStatException String
     deriving (Show)
 
 instance Exception XerxesException

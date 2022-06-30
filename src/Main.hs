@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           FStats                     (FStatSpec (..), FstatsOptions (..),
-                                             fStatSpecParser, runFstats, runParser)
-import           RAS                        (RASOptions (..), runRAS, FreqSpec(..))
+import           FStats                     (FstatsOptions (..),
+                                             runFstats, runParser)
+import           FStatsConfig               (fStatSpecParser, FStatInput(..))
+import           RAS                        (FreqSpec (..), RASOptions (..),
+                                             runRAS)
 import           Utils                      (JackknifeMode (..))
 
 import           Control.Applicative        ((<|>))
@@ -75,9 +77,7 @@ fstatsOptParser :: OP.Parser FstatsOptions
 fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseJackknife
                                 <*> parseExcludeChroms
-                                <*> OP.many parseStatSpecsDirect
-                                <*> parseStatSpecsFromFile
-                                <*> parseFstatConfig
+                                <*> parseFstatInput
                                 <*> parseMaxSnps
                                 <*> parseTableOutFile
 
@@ -106,25 +106,24 @@ parseExcludeChroms = OP.option (map Chrom . splitWith (==',') . pack <$> OP.str)
         \list. Defaults to X, Y, MT, chrX, chrY, chrMT, 23,24,90" <> OP.value [Chrom "X", Chrom "Y", Chrom "MT",
         Chrom "chrX", Chrom "chrY", Chrom "chrMT", Chrom "23", Chrom "24", Chrom "90"])
 
-parseStatSpecsDirect :: OP.Parser FStatSpec
-parseStatSpecsDirect = OP.option (OP.eitherReader readStatSpecString) (OP.long "stat" <>
-    OP.help "Specify a summary statistic to be computed. Can be given multiple times. Possible options are: F4(a, \
-        \b, c, d), F3(a, b, c), F2(a, b), PWM(a, b), FST(a, b), Het(a) and some more special options \
-        \described at https://poseidon-framework.github.io/#/xerxes?id=fstats-command. Valid entities used in the \
-        \statistics are group names as specified in the *.fam, *.ind or *.janno failes, individual names using the \
-        \syntax \"<Ind_name>\", so enclosing them in angular brackets, and entire packages like \"*Package1*\" using the \
-        \Poseidon package title. You can mix entity types, like in \
-        \\"F4(<Ind1>,Group2,*Pac*,<Ind4>)\". Group or individual names are separated by commas, and a comma \
-        \can be followed by any number of spaces.")
-
-parseStatSpecsFromFile :: OP.Parser (Maybe FilePath)
-parseStatSpecsFromFile = OP.option (Just <$> OP.str) (OP.long "statFile" <> OP.help "Specify a file with F-Statistics specified \
-    \similarly as specified for option --stat. One line per statistics, and no new-line at the end" <> OP.value Nothing)
-
-readStatSpecString :: String -> Either String FStatSpec
-readStatSpecString s = case runParser fStatSpecParser () "" s of
-    Left p  -> Left (show p)
-    Right x -> Right x
+parseFstatInput :: OP.Parser [FStatInput]
+parseFstatInput = OP.some (parseStatSpecsDirect <|> parseYamlInput <|> parseSimpleText)
+  where
+    parseStatSpecsDirect = OP.option (FStatInputDirect <$> OP.eitherReader readStatSpecString) (OP.long "stat" <>
+        OP.help "Specify a summary statistic to be computed. Can be given multiple times. Possible options are: F4(a, \
+            \b, c, d), F3(a, b, c), F2(a, b), PWM(a, b), FST(a, b), Het(a) and some more special options \
+            \described at https://poseidon-framework.github.io/#/xerxes?id=fstats-command. Valid entities used in the \
+            \statistics are group names as specified in the *.fam, *.ind or *.janno failes, individual names using the \
+            \syntax \"<Ind_name>\", so enclosing them in angular brackets, and entire packages like \"*Package1*\" using the \
+            \Poseidon package title. You can mix entity types, like in \
+            \\"F4(<Ind1>,Group2,*Pac*,<Ind4>)\". Group or individual names are separated by commas, and a comma \
+            \can be followed by any number of spaces.")
+    parseYamlInput = OP.option (FStatInputYaml <$> OP.str) (OP.long "Specify a yaml file for the Fstatistics and group configurations")
+    parseSimpleText = OP.option (FStatInputSimpleText <$> OP.str) (OP.long "statFile" <> OP.help "Specify a file with F-Statistics specified \
+    \similarly as specified for option --stat. One line per statistics, and no new-line at the end")
+    readStatSpecString s = case runParser fStatSpecParser () "" s of
+        Left p  -> Left (show p)
+        Right x -> Right x
 
 rasOptParser :: OP.Parser RASOptions
 rasOptParser = RASOptions <$>
@@ -182,15 +181,15 @@ parseBlockTableFile :: OP.Parser (Maybe FilePath)
 parseBlockTableFile = OP.option (Just <$> OP.str) (OP.long "blockTableFile" <>
     OP.help "a file to which the per-Block results are written as tab-separated file" <> OP.value Nothing)
 
-parseFstatConfig :: OP.Parser (Maybe FilePath)
-parseFstatConfig = OP.option (Just <$> OP.str) (OP.long "config" <> OP.help "Config file in Dhall" <> OP.value Nothing)
+-- parseFstatConfig :: OP.Parser (Maybe FilePath)
+-- parseFstatConfig = OP.option (Just <$> OP.str) (OP.long "config" <> OP.help "Config file in Dhall" <> OP.value Nothing)
 
 parseMaxSnps :: OP.Parser (Maybe Int)
 parseMaxSnps = OP.option (Just <$> OP.auto) (OP.long "maxSnps" <>
     OP.help "Stop after a maximum nr of snps has been processed. Useful for short test runs" <>
     OP.value Nothing <> OP.hidden)
 
-parseNoTransitions :: OP.Parser Bool 
+parseNoTransitions :: OP.Parser Bool
 parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transition SNPs and use only transversions")
 
 parseBedFile :: OP.Parser (Maybe FilePath)

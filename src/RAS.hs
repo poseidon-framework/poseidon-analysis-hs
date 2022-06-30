@@ -9,7 +9,7 @@ import           Utils                               (GenomPos,
                                                       computeAlleleFreq,
                                                       computeJackknifeAdditive,
                                                       computeJackknifeOriginal,
-                                                      GroupDef)
+                                                      addGroupDefs)
 import RASconfig (PopConfig(..))
 
 import           Control.Exception                   (throwIO)
@@ -36,7 +36,6 @@ import           Poseidon.EntitiesList               (EntitiesList,
                                                       PoseidonEntity (..),
                                                       conformingEntityIndices,
                                                       findNonExistentEntities,
-                                                      indInfoConformsToEntitySpec,
                                                       indInfoFindRelevantPackageNames,
                                                       underlyingEntity)
 import           Poseidon.Package                    (PackageReadOptions (..),
@@ -109,7 +108,6 @@ runRAS rasOpts = do
             Nothing -> []
             Just o  -> [o]
     
-
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
     let allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++
@@ -271,15 +269,6 @@ readPopConfig fn = do
     case decodeEither' bs of
         Left err -> throwIO $ PopConfigYamlException fn (show err)
         Right x  -> return x
-
-addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
-addGroupDefs groupDefs indInfoRows = do
-    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
-    let additionalGroupNames = do
-            (groupName, signedEntityList) <- groupDefs
-            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
-            return groupName
-    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
 buildRasFold :: (MonadIO m) => [IndividualInfo] -> FreqSpec -> FreqSpec -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
 buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights =
