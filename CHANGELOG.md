@@ -1,3 +1,4 @@
+- 0.2.0.0: new config-file input for fstats, including ascertainment options.
 - 0.1.3.1: Fixed missing-table-out bug
 - 0.1.3.0: Added F4 output to ras.
 - 0.1.2.4: Rounded stdout value output in fstats to 4 digits.
