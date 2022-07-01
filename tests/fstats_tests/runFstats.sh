@@ -2,8 +2,7 @@
 
 # stack run xerxes -- fstats --statFile fstats.txt -d ../../published_data/2012_PattersonGenetics -f testTable.txt
 
-stack run xerxes -- fstats --stat "F2(French, Spanish)" --stat "PWM(Mbuti, Sardinian)" \
-  --statFile fstats.txt --statConfig config.yaml -d ../../../published_data/2012_PattersonGenetics
+stack run xerxes -- fstats --statConfig config.yaml -d ../../../published_data
 
 # .---------------------------------.------------------------.-----------------------.---------------------.
 # |            Statistic            |        Estimate        |        StdErr         |       Z score       |

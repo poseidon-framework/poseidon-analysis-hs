@@ -85,38 +85,43 @@ instance FromJSON FStatType where
         _            -> fail "could not parse FStat type. Must be one of F4, F3, F2, FST, PWM, Het, F3vanilla, FSTvanilla, F2vanilla"
 
 
-processYamlConfig :: FStatConfigYaml -> ([GroupDef], [FStatSpec])
-processYamlConfig (FStatConfigYaml groupDefs multiFstats) =
-    let fStats = do
+processYamlConfig :: FStatConfigYaml -> Either XerxesException ([GroupDef], [FStatSpec])
+processYamlConfig (FStatConfigYaml groupDefs multiFstats) = do
+    let eitherFStats = do
             MultiFStatSpec t aList bList cList dList maybeAsc <- multiFstats
             case fstatSlotLength t of
-                1 -> do
-                    a <- aList
-                    return $ FStatSpec t [a] maybeAsc
-                2 -> do
-                    a <- aList
-                    b <- bList
-                    return $ FStatSpec t [a, b] maybeAsc
+                1 ->
+                    if null aList then
+                        [Left . FStatException $ "a can't be empty for " ++ show t ++ " statistics"]
+                    else
+                        [Right $ FStatSpec t [a] maybeAsc | a <- aList]
+                2 ->
+                    if null aList || null bList then
+                        [Left . FStatException $ "a and b can't be empty for " ++ show t ++ " statistics"]
+                    else
+                        [Right $ FStatSpec t [a, b] maybeAsc | a <- aList, b <- bList]
                 3 -> do
-                    a <- aList
-                    b <- bList
-                    c <- cList
-                    return $ FStatSpec t [a, b, c] maybeAsc
+                    if null aList || null bList || null cList then
+                        [Left . FStatException $ "a, b and c can't be empty for " ++ show t ++ " statistics"]
+                    else
+                        [Right $ FStatSpec t [a, b, c] maybeAsc | a <- aList, b <- bList, c <- cList]
                 4 -> do
-                    a <- aList
-                    b <- bList
-                    c <- cList
-                    d <- dList
-                    return $ FStatSpec t [a, b, c, d] maybeAsc
+                    if null aList || null bList || null cList || null dList then
+                        [Left . FStatException $ "a, b, c and d can't be empty for " ++ show t ++ " statistics"]
+                    else
+                        [Right $ FStatSpec t [a, b, c, d] maybeAsc | a <- aList, b <- bList, c <- cList, d <- dList]
                 _ -> error "should never happen"
-    in  (groupDefs, fStats)
+    fStats <- sequence eitherFStats
+    return (groupDefs, fStats)
 
 readFstatsYamlConfig :: FilePath -> IO ([GroupDef], [FStatSpec])
 readFstatsYamlConfig fn = do
     bs <- B.readFile fn
     case decodeEither' bs of
         Left err -> throwIO $ PopConfigYamlException fn (show err)
-        Right x  -> return (processYamlConfig x)
+        Right x  -> case processYamlConfig x of
+            Left e -> throwIO e
+            Right c -> return c
 
 -- | A parser to parse Summary Statistic specifications from the simple text file input. Every line is one statistics. No ascertainment can be given with this interface.
 fStatSpecParser :: P.Parser FStatSpec
