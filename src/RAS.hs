@@ -71,7 +71,6 @@ data RASOptions = RASOptions
     , _rasMaxFreq        :: FreqSpec
     , _rasMaxMissingness :: Double
     , _rasBlockTableFile :: Maybe FilePath
-    , _rasTableOutFile   :: Maybe FilePath
     , _rasF4tableOutFile :: Maybe FilePath
     , _rasMaxSnps        :: Maybe Int
     , _rasNoTransitions  :: Bool
@@ -158,26 +157,15 @@ runRAS rasOpts = do
         liftIO $ hPutStrLn stderr "collating results"
 
         -- Output for the standard output (a simple table with RAS estimates, using the pretty-printing Text.Table.Layout package )
-        let tableH = ["Left", "Right", "Norm", "RAS", "StdErr"]
-        let tableB = do
-                (i, popLeft) <- zip [0..] popLefts
-                (j, popRight) <- zip [0..] popRights
+        putStrLn . intercalate "\t" $ ["Left", "Right", "Norm", "RAS", "StdErr"]
+        forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
+            forM_ (zip [0..] popRights) $ \(j, popRight) -> do
                 -- get the raw counts for the Jackknife computation
                 let counts = [blockSiteCount bd !! i | bd <- blockData]
                     vals = [(blockVals bd !! i) !! j | bd <- blockData]
                 -- compute jackknife estimate and standard error (see Utils.hs for implementation of the Jackknife)
                 let (val, err) = computeJackknifeAdditive counts vals
-                return [show popLeft, show popRight, show (sum counts), show val, show err]
-        let colSpecs = replicate 7 (column expand def def def)
-        putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
-
-        -- Output to the table file, same data as to the standard out, but tab-separated
-        case _rasTableOutFile rasOpts of
-            Nothing -> return ()
-            Just outFn -> do
-                withFile outFn WriteMode $ \h -> do
-                    hPutStrLn h $ intercalate "\t" tableH
-                    forM_ tableB $ \row -> hPutStrLn h (intercalate "\t" row)
+                putStrLn . intercalate "\t" $ [show popLeft, show popRight, show (sum counts), show val, show err]
 
         -- Compute and output F4 as the pairwise difference of F3. It's only complicated because of the Jackknife        
         case _rasF4tableOutFile rasOpts of
@@ -185,56 +173,52 @@ runRAS rasOpts = do
             Just outFn -> do
                 withFile outFn WriteMode $ \h -> do
                     hPutStrLn h $ intercalate "\t" ["Left1", "Left2", "Right", "Norm1", "Norm2", "RAS-F4", "StdErr", "Z score"]
-                    let rows = do
-                            -- loop over all possible left1, left2 and rights
-                            (l1, popLeft1) <- zip [0..] popLefts
-                            (l2, popLeft2) <- zip [0..] popLefts
-                            False <- return $ l1 == l2
-                            (r, popRight) <- zip [0..] popRights
-                            let ras1_vals = [(blockVals bd !! l1) !! r | bd <- blockData]
-                                ras2_vals = [(blockVals bd !! l2) !! r | bd <- blockData]
-                                ras1_norms = [blockSiteCount bd !! l1 | bd <- blockData]
-                                ras2_norms = [blockSiteCount bd !! l2 | bd <- blockData]
-                                ras1_full_estimate = weightedAverage ras1_vals (map fromIntegral ras1_norms)
-                                ras2_full_estimate = weightedAverage ras2_vals (map fromIntegral ras2_norms)
-                                rasf4_full_estimate = ras1_full_estimate - ras2_full_estimate
-                                -- compute rasf4 estimates based on one block removed, in turn:
-                            let rasf4_minus1_estimates = do
-                                    --loop over block-indices to remove each block in turn
-                                    removeIndex <- [0.. (length blockData)]
-                                    let blockData_minus1 = [bd | (i, bd) <- zip [0..] blockData, i /= removeIndex]
-                                    let ras1_vals_minus1 = [(blockVals bd !! l1) !! r | bd <- blockData_minus1]
-                                        ras2_vals_minus1 = [(blockVals bd !! l2) !! r | bd <- blockData_minus1]
-                                        ras1_norms_minus1 = [blockSiteCount bd !! l1 | bd <- blockData_minus1]
-                                        ras2_norms_minus1 = [blockSiteCount bd !! l2 | bd <- blockData_minus1]
-                                        ras1_estimate_minus1 = weightedAverage ras1_vals_minus1 (map fromIntegral ras1_norms_minus1)
-                                        ras2_estimate_minus1 = weightedAverage ras2_vals_minus1 (map fromIntegral ras2_norms_minus1)
-                                    return $ ras1_estimate_minus1 - ras2_estimate_minus1
-                            -- compute the block weights needed for Jackknife. Absolute values don't matter, only relative, so we'll just go with the one with more data to assign block weights.
-                            let jackknife_block_weights = if sum ras1_norms > sum ras2_norms then ras1_norms else ras2_norms
+                    -- loop over all possible left1, left2 and rights
+                    forM_ (zip [0..] popLefts) $ \(l1, popLeft1) ->
+                        forM_ (zip [0..] popLefts) $ \(l2, popLeft2) ->
+                            when (l1 /= l2) $
+                                forM_ (zip [0..] popRights) $ \(r, popRight) -> do
+                                    let ras1_vals = [(blockVals bd !! l1) !! r | bd <- blockData]
+                                        ras2_vals = [(blockVals bd !! l2) !! r | bd <- blockData]
+                                        ras1_norms = [blockSiteCount bd !! l1 | bd <- blockData]
+                                        ras2_norms = [blockSiteCount bd !! l2 | bd <- blockData]
+                                        ras1_full_estimate = weightedAverage ras1_vals (map fromIntegral ras1_norms)
+                                        ras2_full_estimate = weightedAverage ras2_vals (map fromIntegral ras2_norms)
+                                        rasf4_full_estimate = ras1_full_estimate - ras2_full_estimate
+                                        -- compute rasf4 estimates based on one block removed, in turn:
+                                    let rasf4_minus1_estimates = do
+                                            --loop over block-indices to remove each block in turn
+                                            removeIndex <- [0.. (length blockData)]
+                                            let blockData_minus1 = [bd | (i, bd) <- zip [0..] blockData, i /= removeIndex]
+                                            let ras1_vals_minus1 = [(blockVals bd !! l1) !! r | bd <- blockData_minus1]
+                                                ras2_vals_minus1 = [(blockVals bd !! l2) !! r | bd <- blockData_minus1]
+                                                ras1_norms_minus1 = [blockSiteCount bd !! l1 | bd <- blockData_minus1]
+                                                ras2_norms_minus1 = [blockSiteCount bd !! l2 | bd <- blockData_minus1]
+                                                ras1_estimate_minus1 = weightedAverage ras1_vals_minus1 (map fromIntegral ras1_norms_minus1)
+                                                ras2_estimate_minus1 = weightedAverage ras2_vals_minus1 (map fromIntegral ras2_norms_minus1)
+                                            return $ ras1_estimate_minus1 - ras2_estimate_minus1
+                                    -- compute the block weights needed for Jackknife. Absolute values don't matter, only relative, so we'll just go with the one with more data to assign block weights.
+                                    let jackknife_block_weights = if sum ras1_norms > sum ras2_norms then ras1_norms else ras2_norms
 
-                            -- compute the jackknife estimate and stderr
-                            let (rasf4_jackknife_estimate, rasf4_jackknife_stderr) =
-                                    computeJackknifeOriginal rasf4_full_estimate (map fromIntegral jackknife_block_weights) rasf4_minus1_estimates
+                                    -- compute the jackknife estimate and stderr
+                                    let (rasf4_jackknife_estimate, rasf4_jackknife_stderr) =
+                                            computeJackknifeOriginal rasf4_full_estimate (map fromIntegral jackknife_block_weights) rasf4_minus1_estimates
 
-                            -- print
-                            return $ intercalate "\t" [show popLeft1, show popLeft2, show popRight, show (sum ras1_norms),
-                                show (sum ras2_norms), show rasf4_jackknife_estimate, show rasf4_jackknife_stderr,
-                                show (rasf4_jackknife_estimate / rasf4_jackknife_stderr)]
-                    mapM_ (hPutStrLn h) rows
+                                    -- print
+                                    hPutStrLn h . intercalate "\t" $ [show popLeft1, show popLeft2, show popRight, show (sum ras1_norms),
+                                        show (sum ras2_norms), show rasf4_jackknife_estimate, show rasf4_jackknife_stderr,
+                                        show (rasf4_jackknife_estimate / rasf4_jackknife_stderr)]
         -- optionally output the block file 
         case _rasBlockTableFile rasOpts of
             Nothing -> return ()
             Just fn -> withFile fn WriteMode $ \h -> do
-                hPutStrLn h $ intercalate "\t" ["Left", "Right", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "Norm", "RAS"]
-                let rows = do
-                        (i, popLeft) <- zip [0..] popLefts
-                        (j, popRight) <- zip [0..] popRights
-                        (k, block) <- zip [(0 :: Int)..] blockData
-                        return [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
-                            show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
-                            show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]
-                forM_ rows $ \row -> hPutStrLn h (intercalate "\t" row)
+                hPutStrLn h . intercalate "\t" $ ["Left", "Right", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "Norm", "RAS"]
+                forM_ (zip [0..] popLefts) $ \(i, popLeft) -> 
+                    forM_ (zip [0..] popRights) $ \(j, popRight) -> 
+                        forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) -> 
+                            hPutStrLn h . intercalate "\t" $ [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
+                                show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
+                                show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]
   where
     chromFilter exclusionList (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` exclusionList
     capNrSnps Nothing  = cat

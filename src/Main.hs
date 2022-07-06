@@ -135,7 +135,6 @@ rasOptParser = RASOptions <$>
     parseMaxFreq <*>
     parseMaxMissingness <*>
     parseBlockTableFile <*>
-    parseTableOutFile <*>
     parseF4tableOutFile <*>
     parseMaxSnps <*>
     parseNoTransitions <*>
