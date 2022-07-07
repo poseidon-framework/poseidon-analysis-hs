@@ -72,16 +72,6 @@ data FstatsOptions = FstatsOptions
     , _foTableOut      :: Maybe FilePath
     }
 
--- | An internal datatype to represent Summary statistics with indices of individuals given as integers, and ascertainment information
-data FStat = FStat {
-    _fType        :: FStatType,
-    _slotI        :: [[Int]],
-    _ascOutgroupI :: [Int], -- an empty list here means that minor allele frequencies are to be taken as ascertaining frequency
-    _ascRefI      :: [Int], -- empty list means no ascertainment
-    _ascLower     :: Double,
-    _ascUpper     :: Double
-} deriving (Eq)
-
 data BlockData = BlockData
     { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos
@@ -153,9 +143,9 @@ runFstats opts = do
                 let FStatSpec fType slots maybeAsc = fstat
                     abcdStr = take 4 (map show slots ++ repeat "")
                     (asc1, asc2) = case maybeAsc of
-                        Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref), show (lo, up))
-                        Just (AscertainmentSpec Nothing ref lo up) -> (show ("n/a", ref), show (lo, up))
-                        _ -> ("n/a", "n/a")
+                        Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),    show (lo, up))
+                        Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a", ref), show (lo, up))
+                        _ ->                                            ("n/a",             "n/a")
                 return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
         putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
         case _foTableOut opts of
@@ -179,35 +169,35 @@ summaryPrintFstats (FStatSpec fType slots maybeAsc) =
             Just _  -> "_ascertained"
     in  show fType ++ "("  ++ intercalate "," (map show slots) ++ ")" ++ ascString
 
+type EntityIndicesLookup     = PoseidonEntity -> [Int]
+type EntityAlleleCountLookup = PoseidonEntity -> (Int, Int)
+type EntityAlleleFreqLookup  = PoseidonEntity -> Maybe Double
+
 -- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
-buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> m ([FStat], FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> m (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs = do
-    let getI = (flip conformingEntityIndices) indInfo . return
-        fStats = do
-            FStatSpec t slots maybeAsc <- fStatSpecs
-            let (ascOG, ascRef, lo, up) = case maybeAsc of
-                    Nothing -> ([], [], 0.0, 1.0)
-                    Just (AscertainmentSpec ogE refE lo' up') -> (maybe [] getI ogE, getI refE, lo', up')
-            return $ FStat t (map getI slots) ascOG ascRef lo up
+    let getI = memoize $ (flip conformingEntityIndices) indInfo . return
     blockAccum <- do
-        listOfInnerVectors <- forM fStats $ \(FStat fType _ _ _ _ _) -> do
+        listOfInnerVectors <- forM fStatSpecs $ \(FStat fType slots _) -> do
             case fType of
                 F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
                 _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
-    return $ (fStats, FoldM (step fStats blockAccum) (initialize blockAccum) (extract blockAccum))
+    return $ FoldM (step getI fStatSpecs blockAccum) (initialize blockAccum) (extract blockAccum)
   where
-    step :: (MonadIO m) => [FStat] -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
-    step fStats blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step :: (MonadIO m) => EntityIndicesLookup -> [FStatSpec] -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
+    step getI fStatSpecs blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         -- this function is called for every SNP.
         startPos <- liftIO $ readIORef (accMaybeStartPos blockAccum)
         case startPos of
             Nothing -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
             Just _  -> return ()
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
-        forM_ (zip [0..] fStats) $ \(i, fstat) -> do
+        let alleleCountLookupF = memoize $ computeAlleleCount genoLine . getI 
+            alleleFreqLookupF  = memoize $ computeAlleleFreq  genoLine . getI 
+        forM_ (zip [0..] fStatSpec) $ \(i, fStatSpec) -> do
             -- loop over all statistics
-            let maybeAccValues = computeFStatAccumulators fstat genoLine -- compute the accumulating values for that site.
+            let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
             forM_ (zip [0..] maybeAccValues) $ \(j, maybeAccVal) -> do
                 case maybeAccVal of
                     Nothing -> return ()
