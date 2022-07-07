@@ -53,9 +53,6 @@ import           SequenceFormats.Genomic             (genomicPosition)
 import           SequenceFormats.Utils               (Chrom (..))
 import           System.IO                           (IOMode (..), hPutStrLn,
                                                       stderr, withFile)
-import           Text.Layout.Table                   (asciiRoundS, column, def,
-                                                      expand, rowsG,
-                                                      tableString, titlesH)
 
 data FreqSpec = FreqNone
     | FreqK Int

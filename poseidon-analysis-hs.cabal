@@ -17,6 +17,7 @@ executable xerxes
     hs-source-dirs:     src
     build-depends:      base, poseidon-hs, optparse-applicative, sequence-formats, foldl,
                         exceptions, vector, lens-family, pipes, pipes-group, pipes-safe,
-                        table-layout, parsec, aeson, bytestring, text, yaml, unordered-containers
+                        table-layout, parsec, aeson, bytestring, text, yaml, unordered-containers,
+                        data-memocombinators
     other-modules:      Paths_poseidon_analysis_hs, FStats, Utils, RAS, RASconfig, FStatsConfig
     default-language:   Haskell2010

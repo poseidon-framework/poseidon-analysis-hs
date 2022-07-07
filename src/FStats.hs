@@ -29,6 +29,7 @@ import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import           Data.IORef                  (IORef, modifyIORef', newIORef,
                                               readIORef, writeIORef)
 import           Data.List                   (intercalate, nub, (\\))
+import Data.MemoCombinators.Class (Memoizable(..))
 import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
@@ -124,8 +125,8 @@ runFstats opts = do
 
         hPutStrLn stderr $ "Computing stats:"
         mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
-        (fStats, blocks) <- runSafeT $ do
-            (fStats, statsFold) <- buildStatSpecsFold jointIndInfo statSpecs
+        blocks <- runSafeT $ do
+            statsFold <- buildStatSpecsFold jointIndInfo statSpecs
             (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
             let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
                 eigenstratProdInChunks = case _foJackknifeMode opts of
@@ -133,9 +134,9 @@ runFstats opts = do
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
             let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
             blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-            return (fStats, blocks)
-        let jackknifeEstimates = processBlocks fStats blocks
-        let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length fStats - 1)]]
+            return blocks
+        let jackknifeEstimates = processBlocks statSpecs blocks
+        let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
         let colSpecs = replicate 11 (column expand def def def)
             tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
             tableB = do
@@ -178,7 +179,7 @@ buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> m (FoldM
 buildStatSpecsFold indInfo fStatSpecs = do
     let getI = memoize $ (flip conformingEntityIndices) indInfo . return
     blockAccum <- do
-        listOfInnerVectors <- forM fStatSpecs $ \(FStat fType slots _) -> do
+        listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType slots _) -> do
             case fType of
                 F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
                 _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
@@ -195,7 +196,7 @@ buildStatSpecsFold indInfo fStatSpecs = do
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
         let alleleCountLookupF = memoize $ computeAlleleCount genoLine . getI 
             alleleFreqLookupF  = memoize $ computeAlleleFreq  genoLine . getI 
-        forM_ (zip [0..] fStatSpec) $ \(i, fStatSpec) -> do
+        forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
             forM_ (zip [0..] maybeAccValues) $ \(j, maybeAccVal) -> do
@@ -222,41 +223,40 @@ buildStatSpecsFold indInfo fStatSpecs = do
             (Just startPos, Just endPos) -> return $ BlockData startPos endPos count statVals
             _ -> error "should never happen"
 
-computeFStatAccumulators :: FStat -> GenoLine -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
+computeFStatAccumulators :: FStatSpec -> EntityAlleleCountLookup -> EntityAlleleFreqLookup -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
 -- but in case of F3, for example, also a second accumulator and its normaliser for capturing the heterozygosity
-computeFStatAccumulators (FStat fType indices ascOgI ascRefI ascLo ascHi) gL =
-    let caf = computeAlleleFreq gL -- this returns Nothing if missing data
-        cac i = case computeAlleleCount gL i of -- this also returns Nothing if missing data.
+computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFreqF =
+    let caf = alleleFreqF -- this returns Nothing if missing data
+        cac e = case alleleCountF e of -- this also returns Nothing if missing data.
             (_, 0) -> Nothing
             x      -> Just x
-        ascCond =
-            if null ascRefI then
-                return True
-            else do -- Maybe Monad - if any of the required allele frequencies are missing, this returns a Nothing
-                let ascRefX = caf ascRefI
-                ascFreq <- if null ascOgI then do
-                        x <- ascRefX
+        ascCond = case maybeAsc of
+            Nothing -> return True
+            Just (AscertainmentSpec maybeOg ascRef lo hi) -> do -- Maybe Monad - if any of the required allele frequencies are missing, this returns a Nothing
+                ascFreq <- case maybeOg of
+                    Nothing -> do
+                        x <- caf ascRef
                         if x > 0.5 then return (1.0 - x) else return x -- use minor allele frequency if no outgroup is given
-                    else do -- Maybe Monad
-                        ogX <- caf ascOgI
-                        x <- ascRefX
+                    Just og -> do -- Maybe Monad
+                        ogX <- caf og
+                        x <- caf ascRef
                         if (ogX < 0.5) then return x else return (1.0 - x)
-                return $ ascFreq >= ascLo && ascFreq <= ascHi
+                return $ ascFreq >= lo && ascFreq <= hi
         applyAsc x = do -- Maybe Monad
             cond <- ascCond
-            if cond then return x else return 0.0
-    in  case (fType, indices) of
-            (F4,         [aI, bI, cI, dI]) -> retWithNormAcc $ (computeF4         <$> caf aI <*> caf bI <*> caf cI <*> caf dI) >>= applyAsc
-            (F3vanilla,  [aI, bI, cI])     -> retWithNormAcc $ (computeF3vanilla  <$> caf aI <*> caf bI <*> caf cI)            >>= applyAsc
-            (F2vanilla,  [aI, bI])         -> retWithNormAcc $ (computeF2vanilla  <$> caf aI <*> caf bI)                       >>= applyAsc
-            (PWM,        [aI, bI])         -> retWithNormAcc $ (computePWM        <$> caf aI <*> caf bI)                       >>= applyAsc
-            (Het,        [aI])             -> retWithNormAcc $ (computeHet        <$> cac aI)                                  >>= applyAsc
-            (F2,         [aI, bI])         -> retWithNormAcc $ (computeF2         <$> cac aI <*> cac bI)                       >>= applyAsc
-            (FSTvanilla, [aI, bI])         -> retWithNormAcc $ (computeFSTvanilla    (caf aI)   (caf bI))                      >>= applyAsc
-            (FST,        [aI, bI])         -> retWithNormAcc $ (computeFST           (cac aI)   (cac bI))                      >>= applyAsc
-            (F3,         [aI, bI, cI])     ->
-                retWithNormAcc ((computeF3noNorm <$> caf aI <*> caf bI <*> cac cI) >>= applyAsc) ++
-                retWithNormAcc ((computeHet <$> cac cI) >>= applyAsc)
+            if cond then return x else return 0.0 -- set statistic result to 0.0 if ascertainment is False
+    in  case (fType, slots) of
+            (F4,         [a, b, c, d]) -> retWithNormAcc $ (computeF4         <$> caf a <*> caf b <*> caf c <*> caf d) >>= applyAsc
+            (F3vanilla,  [a, b, c])    -> retWithNormAcc $ (computeF3vanilla  <$> caf a <*> caf b <*> caf c)           >>= applyAsc
+            (F2vanilla,  [a, b])       -> retWithNormAcc $ (computeF2vanilla  <$> caf a <*> caf b)                     >>= applyAsc
+            (PWM,        [a, b])       -> retWithNormAcc $ (computePWM        <$> caf a <*> caf b)                     >>= applyAsc
+            (Het,        [a])          -> retWithNormAcc $ (computeHet        <$> cac a)                               >>= applyAsc
+            (F2,         [a, b])       -> retWithNormAcc $ (computeF2         <$> cac a <*> cac b)                     >>= applyAsc
+            (FSTvanilla, [a, b])       -> retWithNormAcc $ (computeFSTvanilla    (caf a)   (caf b))                    >>= applyAsc
+            (FST,        [a, b])       -> retWithNormAcc $ (computeFST           (cac a)   (cac b))                    >>= applyAsc
+            (F3,         [a, b, c])    ->
+                retWithNormAcc ((computeF3noNorm <$> caf a <*> caf b <*> cac c) >>= applyAsc) ++
+                retWithNormAcc ((computeHet <$> cac c) >>= applyAsc)
             _ -> error "should never happen"
   where
     retWithNormAcc (Just x) = [Just x, Just 1.0]
@@ -291,7 +291,6 @@ computeFStatAccumulators (FStat fType indices ascOgI ascRefI ascLo ascHi) gL =
         _ -> Nothing
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
-
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
       _readOptVerbose          = False
@@ -304,11 +303,11 @@ pacReadOpts = defaultPackageReadOptions {
 collectStatSpecGroups :: [FStatSpec] -> [PoseidonEntity]
 collectStatSpecGroups statSpecs = nub $ concat [slots | FStatSpec _ slots _ <- statSpecs]
 
-processBlocks :: [FStat] -> [BlockData] -> [(Double, Double)]
-processBlocks stats blocks = do
+processBlocks :: [FStatSpec] -> [BlockData] -> [(Double, Double)]
+processBlocks statSpecs blocks = do
     let block_weights = map (fromIntegral . blockSiteCount) blocks
-    (i, stat) <- zip [0..] stats
-    case _fType stat of
+    (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
+    case fType of
         F3 ->
             let numerator_values = map ((!!0) . (!!i) . blockStatVal) blocks
                 numerator_norm = map ((!!1) . (!!i) . blockStatVal) blocks
