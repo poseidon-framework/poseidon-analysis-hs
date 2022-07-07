@@ -232,9 +232,8 @@ buildStatSpecsFold indInfo fStatSpecs = do
             (Just startPos, Just endPos) -> return $ BlockData startPos endPos count statVals
             _ -> error "should never happen"
 
--- TODO: Currently ignores ascertainment!
 computeFStatAccumulators :: FStat -> GenoLine -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
--- but in case of F3, for example, also a second accumulator capturing the heterozygosity
+-- but in case of F3, for example, also a second accumulator and its normaliser for capturing the heterozygosity
 computeFStatAccumulators (FStat fType indices ascOgI ascRefI ascLo ascHi) gL =
     let caf = computeAlleleFreq gL -- this returns Nothing if missing data
         cac i = case computeAlleleCount gL i of -- this also returns Nothing if missing data.
