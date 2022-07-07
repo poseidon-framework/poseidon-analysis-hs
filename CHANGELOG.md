@@ -1,3 +1,4 @@
+- 0.2.0.2: Removed redundant log output after loading the config file.
 - 0.2.0.1: fixed spaceleak in the final table-printing in ras
 - 0.2.0.0: new config-file input for fstats, including ascertainment options.
 - 0.1.3.1: Fixed missing-table-out bug
