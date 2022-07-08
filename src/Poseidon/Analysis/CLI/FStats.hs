@@ -38,7 +38,7 @@ import           Lens.Family2                   (view)
 import           Pipes                          (cat, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
-import           Pipes.Safe                     (runSafeT)
+import           Pipes.Safe                     (runSafeT, SafeT)
 import           Poseidon.EntitiesList          (PoseidonEntity (..),
                                                  conformingEntityIndices,
                                                  findNonExistentEntities,
@@ -131,16 +131,7 @@ runFstats opts = do
 
         logInfo "Computing stats:"
         mapM_ (logInfo . pack . summaryPrintFstats) statSpecs
-        blocks <- liftIO . runSafeT $ do
-            statsFold <- buildStatSpecsFold jointIndInfo statSpecs
-            (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
-            let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
-                eigenstratProdInChunks = case _foJackknifeMode opts of
-                    JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                    JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-            blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-            return blocks
+        blocks <- runSafeT (safeBlock jointIndInfo statSpecs relevantPackages opts)
         let jackknifeEstimates = processBlocks statSpecs blocks
         let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
         let colSpecs = replicate 11 (column expand def def def)
@@ -159,16 +150,34 @@ runFstats opts = do
             Nothing -> return ()
             Just outFn -> liftIO . withFile outFn WriteMode $
                 \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
-  where
-    chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
-    capNrSnps Nothing  = cat
-    capNrSnps (Just n) = P.take n
-    chunkEigenstratByChromosome = view (groupsBy sameChrom)
-    sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
-        chrom1 == chrom2
-    chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
-    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
-        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+
+safeBlock :: [IndividualInfo]
+          -> [FStatSpec]
+          -> [PoseidonPackage]
+          -> FstatsOptions
+          -> SafeT PoseidonLogIO [BlockData]
+safeBlock jointIndInfo statSpecs relevantPackages opts = undefined --do
+--     statsFold <- buildStatSpecsFold jointIndInfo statSpecs
+--     (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
+--     let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
+--         eigenstratProdInChunks = case _foJackknifeMode opts of
+--             JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+--             JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+--     let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
+--     blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+--     return blocks
+--   where
+--     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
+--     capNrSnps Nothing  = cat
+--     capNrSnps (Just n) = P.take n
+--     chunkEigenstratByChromosome = view (groupsBy sameChrom)
+--     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
+--         chrom1 == chrom2
+--     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
+--     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+--         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+
+
 
 summaryPrintFstats :: FStatSpec -> String
 summaryPrintFstats (FStatSpec fType slots maybeAsc) =
