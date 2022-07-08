@@ -43,7 +43,7 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointIndividualInfo,
                                               readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes     (IndividualInfo (..))
-import           Poseidon.Utils              (PoseidonLogIO)
+import           Poseidon.Utils              (PoseidonLogIO, LogMode(..))
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
@@ -86,17 +86,17 @@ runRAS :: RASOptions -> PoseidonLogIO ()
 runRAS rasOpts = do
     -- reading in the configuration file
     PopConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
-    unless (null groupDefs) . logInfo . pack "Found group definitions: " ++ show groupDefs
-    logInfo $ "Found left populations: " ++ show popLefts
-    logInfo $ "Found right populations: " ++ show popRights
+    unless (null groupDefs) . logInfo . pack $ "Found group definitions: " ++ show groupDefs
+    logInfo . pack $ "Found left populations: " ++ show popLefts
+    logInfo . pack $ "Found right populations: " ++ show popRights
     case maybeOutgroup of
         Nothing -> return ()
-        Just o  -> logInfo $ "Found outgroup: " ++ show o
+        Just o  -> logInfo . pack $ "Found outgroup: " ++ show o
 
     -- reading in Poseidon packages
     let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
     allPackages <- readPoseidonPackageCollection pacReadOpts (_rasBaseDirs rasOpts)
-    logInfo $ "Loaded " ++ show (length allPackages) ++ " packages"
+    logInfo . pack $ "Loaded " ++ show (length allPackages) ++ " packages"
 
     -- if no outgroup is given, set it as empty list
     let outgroupSpec = case maybeOutgroup of
@@ -110,9 +110,10 @@ runRAS rasOpts = do
 
     let jointIndInfoAll = getJointIndividualInfo allPackages
     let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
-    if not. null $ missingEntities then
-        logError $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
-        exitFailure
+    if not. null $ missingEntities then do
+        logError . pack $ "The following entities couldn't be found: " ++
+            (intercalate ", " . map show $ missingEntities)
+        liftIO exitFailure
     else do
         -- annotate all individuals with the new adhoc-group definitions where necessary
         let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
@@ -120,8 +121,8 @@ runRAS rasOpts = do
         -- select only the packages needed for the statistics to be computed
         let relevantPackageNames = indInfoFindRelevantPackageNames (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
         let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
-        logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-        mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
+        logInfo . pack $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+        mapM_ (logInfo . pack . posPacTitle) relevantPackages
 
         -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
@@ -136,8 +137,8 @@ runRAS rasOpts = do
                 Just fn -> filterThroughBed (readBedFile fn) (genomicPosition . fst)
 
         -- run the fold and retrieve the block data needed for RAS computations and output
-        blockData <- runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+        blockData <- liftIO . runSafeT $ do
+            (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
             let eigenstratProdFiltered =
                     bedFilterFunc (eigenstratProd >->
                                    P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->

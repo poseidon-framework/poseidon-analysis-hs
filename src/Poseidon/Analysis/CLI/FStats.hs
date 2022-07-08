@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
 
 module Poseidon.Analysis.CLI.FStats (
       FStatSpec(..)
@@ -20,6 +20,7 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeJackknifeOriginal)
 
 
+import           Colog                          (logError, logInfo)
 import           Control.Foldl                  (FoldM (..), impurely, list,
                                                  purely)
 import           Control.Monad                  (forM, forM_, unless)
@@ -28,6 +29,7 @@ import           Data.IORef                     (IORef, modifyIORef', newIORef,
                                                  readIORef, writeIORef)
 import           Data.List                      (intercalate, nub, (\\))
 import qualified Data.Map                       as M
+import           Data.Text                      (pack)
 import qualified Data.Vector                    as V
 import qualified Data.Vector.Unboxed            as VU
 import qualified Data.Vector.Unboxed.Mutable    as VUM
@@ -49,9 +51,11 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  getJointIndividualInfo,
                                                  readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
+import           Poseidon.Utils                 (LogMode (..), PoseidonLogIO)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
+import           System.Exit                    (exitFailure)
 import           System.IO                      (IOMode (..), hPutStrLn, stderr,
                                                  withFile)
 import           Text.Layout.Table              (asciiRoundS, column, def,
@@ -77,27 +81,28 @@ data BlockData = BlockData
     { blockStartPos  :: GenomPos
     , blockEndPos    :: GenomPos
     , blockSiteCount :: Int
+    -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
     , blockStatVal   :: [[Double]] -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
     -- For example, most stats will use two numbers, one for the accumulating statistic, and one for the normalisation. Some use more, like F3, which
-    -- accumulates not only (c-a)(c-b), but also the heterozygosity for the denominator, both of which also need normalisation, so F3 has four accumulators.
     }
     deriving (Show)
 
-data BlockAccumulator = BlockAccumulator {
-    accMaybeStartPos :: IORef (Maybe GenomPos),
-    accMaybeEndPos   :: IORef (Maybe GenomPos),
-    accCount         :: IORef Int,
-    accValues        :: V.Vector (VUM.IOVector Double) -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
-        -- the outer vector is boxed and immutable, the inner vector is unboxed and mutable, so that values can be updated as we loop through the data.
-}
+data BlockAccumulator = BlockAccumulator
+    { accMaybeStartPos :: IORef (Maybe GenomPos)
+    , accMaybeEndPos   :: IORef (Maybe GenomPos)
+    , accCount         :: IORef Int
+    -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
+    , accValues        :: V.Vector (VUM.IOVector Double) -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
+    -- the outer vector is boxed and immutable, the inner vector is unboxed and mutable, so that values can be updated as we loop through the data.
+    }
 
 -- | The main function running the FStats command.
-runFstats :: FstatsOptions -> IO ()
+runFstats :: FstatsOptions -> PoseidonLogIO ()
 runFstats opts = do
     -- load packages --
     allPackages <- readPoseidonPackageCollection pacReadOpts (_foBaseDirs opts)
     (groupDefs, statSpecs) <- readFstatInput (_foStatInput opts)
-    unless (null groupDefs) $ hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
+    unless (null groupDefs) . logInfo . pack $ "Found group definitions: " ++ show groupDefs
 
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
@@ -107,8 +112,9 @@ runFstats opts = do
     let jointIndInfoAll = getJointIndividualInfo allPackages
     let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
 
-    if not. null $ missingEntities then
-        hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+    if not. null $ missingEntities then do
+        logError . pack $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+        liftIO exitFailure
     else do
 
         -- annotate all individuals with the new adhoc-group definitions where necessary
@@ -117,17 +123,17 @@ runFstats opts = do
         -- select only the packages needed for the statistics to be computed
         let relevantPackageNames = indInfoFindRelevantPackageNames collectedStats jointIndInfoWithNewGroups
         let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
-        hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-        mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
+        logInfo . pack $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+        mapM_ (logInfo . pack . posPacTitle) relevantPackages
 
         -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
-        hPutStrLn stderr $ "Computing stats:"
-        mapM_ (hPutStrLn stderr . summaryPrintFstats) statSpecs
-        blocks <- runSafeT $ do
+        logInfo "Computing stats:"
+        mapM_ (logInfo . pack . summaryPrintFstats) statSpecs
+        blocks <- liftIO . runSafeT $ do
             statsFold <- buildStatSpecsFold jointIndInfo statSpecs
-            (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
+            (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
             let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
                 eigenstratProdInChunks = case _foJackknifeMode opts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
@@ -144,14 +150,15 @@ runFstats opts = do
                 let FStatSpec fType slots maybeAsc = fstat
                     abcdStr = take 4 (map show slots ++ repeat "")
                     (asc1, asc2) = case maybeAsc of
-                        Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),    show (lo, up))
-                        Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a", ref), show (lo, up))
-                        _ ->                                            ("n/a",             "n/a")
+                        Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
+                        Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
+                        _ ->                                            ("n/a",                       "n/a")
                 return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
-        putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+        liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
         case _foTableOut opts of
             Nothing -> return ()
-            Just outFn -> withFile outFn WriteMode $ \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
+            Just outFn -> liftIO . withFile outFn WriteMode $
+                \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
@@ -180,15 +187,15 @@ buildStatSpecsFold indInfo fStatSpecs = do
     let entityIndicesLookup =
             M.fromList [(s, conformingEntityIndices [s] indInfo) | s <- collectStatSpecGroups fStatSpecs]
     blockAccum <- do
-        listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType slots _) -> do
+        listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
             case fType of
                 F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
                 _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
-    return $ FoldM (step entityIndicesLookup fStatSpecs blockAccum) (initialize blockAccum) (extract blockAccum)
+    return $ FoldM (step entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
   where
-    step :: (MonadIO m) => EntityIndicesLookup -> [FStatSpec] -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
-    step entIndLookup fStatSpecs blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step :: (MonadIO m) => EntityIndicesLookup -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
+    step entIndLookup blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         -- this function is called for every SNP.
         startPos <- liftIO $ readIORef (accMaybeStartPos blockAccum)
         case startPos of

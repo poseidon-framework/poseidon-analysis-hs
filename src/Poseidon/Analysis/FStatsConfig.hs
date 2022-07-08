@@ -7,6 +7,7 @@ import           Poseidon.Analysis.Utils (GroupDef, XerxesException (..),
 import           Control.Applicative     ((<|>))
 import           Control.Exception       (throwIO)
 import           Control.Monad           (forM, when)
+import           Control.Monad.IO.Class  (MonadIO, liftIO)
 import           Data.Aeson              (FromJSON (..), withObject, withText,
                                           (.:), (.:?))
 import qualified Data.ByteString         as B
@@ -21,35 +22,49 @@ import           Text.Read               (readMaybe)
 -- import qualified Dhall as D
 
 -- | A datatype to represent different types of F-Statistics
-data FStatType = F4 | F3 | F2 | PWM | Het | FST | F3vanilla | F2vanilla | FSTvanilla
+data FStatType = F4
+    | F3
+    | F2
+    | PWM
+    | Het
+    | FST
+    | F3vanilla
+    | F2vanilla
+    | FSTvanilla
     deriving (Show, Read, Eq)
 
 -- | A datatype to represent F-Statistics to be computed from genotype data.
-data FStatSpec = FStatSpec FStatType [PoseidonEntity] (Maybe AscertainmentSpec) deriving (Eq, Show)
+data FStatSpec = FStatSpec FStatType [PoseidonEntity] (Maybe AscertainmentSpec)
+    deriving (Eq, Show)
 
-data AscertainmentSpec = AscertainmentSpec {
-    ascOutgroupSpec  :: Maybe PoseidonEntity, -- Here, a Nothing denotes that minor allele frequency in ascRefgroup should be used,
-                                         --otherwise use derived allele frequencies in the ref-group, where the ancestral allele is given by the outgroup
-    ascRefgroupSpec  :: PoseidonEntity,
-    ascLowerFreqSpec :: Double,
-    ascUpperFreqSpec :: Double
-} deriving (Show, Eq)
+data AscertainmentSpec = AscertainmentSpec
+    { ascOutgroupSpec  :: Maybe PoseidonEntity -- Here, a Nothing denotes that minor allele frequency in ascRefgroup should be used,
+    --otherwise use derived allele frequencies in the ref-group, where the ancestral allele is given by the outgroup
+    , ascRefgroupSpec  :: PoseidonEntity
+    , ascLowerFreqSpec :: Double
+    , ascUpperFreqSpec :: Double
+    }
+    deriving (Show, Eq)
 
-data FStatInput = FStatInputDirect FStatSpec | FStatInputYaml FilePath | FStatInputSimpleText FilePath
+data FStatInput = FStatInputDirect FStatSpec
+    | FStatInputYaml FilePath
+    | FStatInputSimpleText FilePath
 
-data FStatConfigYaml = FStatConfigYaml {
-    fcGroupDefs  :: [GroupDef],
-    fcFStatSpecs :: [MultiFStatSpec]
-} deriving (Show)
+data FStatConfigYaml = FStatConfigYaml
+    { fcGroupDefs  :: [GroupDef]
+    , fcFStatSpecs :: [MultiFStatSpec]
+    }
+    deriving (Show)
 
-data MultiFStatSpec = MultiFStatSpec {
-    mFstatType          :: FStatType,
-    mFstatSlotA         :: [PoseidonEntity],
-    mFstatSlotB         :: [PoseidonEntity],
-    mFstatSlotC         :: [PoseidonEntity],
-    mFstatSlotD         :: [PoseidonEntity],
-    mFstatAscertainment :: Maybe AscertainmentSpec
-} deriving (Show)
+data MultiFStatSpec = MultiFStatSpec
+    { mFstatType          :: FStatType
+    , mFstatSlotA         :: [PoseidonEntity]
+    , mFstatSlotB         :: [PoseidonEntity]
+    , mFstatSlotC         :: [PoseidonEntity]
+    , mFstatSlotD         :: [PoseidonEntity]
+    , mFstatAscertainment :: Maybe AscertainmentSpec
+    }
+    deriving (Show)
 
 instance FromJSON FStatConfigYaml where
     parseJSON = withObject "FStatConfigYaml" $ \v -> FStatConfigYaml
@@ -115,13 +130,13 @@ processYamlConfig (FStatConfigYaml groupDefs multiFstats) = do
     fStats <- sequence eitherFStats
     return (groupDefs, fStats)
 
-readFstatsYamlConfig :: FilePath -> IO ([GroupDef], [FStatSpec])
+readFstatsYamlConfig :: (MonadIO m) => FilePath -> m ([GroupDef], [FStatSpec])
 readFstatsYamlConfig fn = do
-    bs <- B.readFile fn
+    bs <- liftIO $ B.readFile fn
     case decodeEither' bs of
-        Left err -> throwIO $ PopConfigYamlException fn (show err)
+        Left err -> liftIO . throwIO $ PopConfigYamlException fn (show err)
         Right x  -> case processYamlConfig x of
-            Left e  -> throwIO e
+            Left e  -> liftIO . throwIO $ e
             Right c -> return c
 
 -- | A parser to parse Summary Statistic specifications from the simple text file input. Every line is one statistics. No ascertainment can be given with this interface.
@@ -159,15 +174,15 @@ fstatSlotLength fStatType = case fStatType of
     FSTvanilla -> 2
     F2vanilla  -> 2
 
-readFStatsSimpleText :: FilePath -> IO [FStatSpec]
+readFStatsSimpleText :: (MonadIO m) => FilePath -> m [FStatSpec]
 readFStatsSimpleText statSpecsFile = do
     let multiFstatSpecParser = fStatSpecParser `P.sepBy1` (P.newline *> P.spaces)
-    eitherParseResult <- P.parseFromFile (P.spaces *> multiFstatSpecParser <* P.spaces) statSpecsFile
+    eitherParseResult <- liftIO $ P.parseFromFile (P.spaces *> multiFstatSpecParser <* P.spaces) statSpecsFile
     case eitherParseResult of
-        Left err -> throwIO (FStatException (show err))
+        Left err -> liftIO . throwIO $ FStatException (show err)
         Right r  -> return r
 
-readFstatInput :: [FStatInput] -> IO ([GroupDef], [FStatSpec])
+readFstatInput :: (MonadIO m) => [FStatInput] -> m ([GroupDef], [FStatSpec])
 readFstatInput inputSources = do
     listOfPairs <- forM inputSources $ \inputSource -> do
         case inputSource of

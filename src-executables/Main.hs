@@ -8,17 +8,22 @@ import           Poseidon.Analysis.FStatsConfig (FStatInput (..),
                                                  fStatSpecParser)
 import           Poseidon.Analysis.Utils        (JackknifeMode (..))
 
+import           Colog                          (logError)
 import           Control.Applicative            ((<|>))
 import           Control.Exception              (catch)
 import           Data.ByteString.Char8          (pack, splitWith)
 import           Data.List                      (intercalate)
+import qualified Data.Text                      as T
 import           Data.Version                   (showVersion)
 import qualified Options.Applicative            as OP
 import           Paths_poseidon_analysis_hs     (version)
 import           Poseidon.PoseidonVersion       (showPoseidonVersion,
                                                  validPoseidonVersions)
-import           Poseidon.Utils                 (PoseidonException (..),
-                                                 renderPoseidonException)
+import           Poseidon.Utils                 (LogMode (..),
+                                                 PoseidonException (..),
+                                                 PoseidonLogIO,
+                                                 renderPoseidonException,
+                                                 usePoseidonLogger)
 import           SequenceFormats.Utils          (Chrom (..))
 import           System.Exit                    (exitFailure)
 import           System.IO                      (hPutStrLn, stderr)
@@ -32,15 +37,15 @@ main = do
     hPutStrLn stderr renderVersion
     hPutStrLn stderr ""
     cmdOpts <- OP.customExecParser p optParserInfo
-    catch (runCmd cmdOpts) handler
+    catch (usePoseidonLogger DefaultLog $ runCmd cmdOpts) handler
     where
         p = OP.prefs OP.showHelpOnEmpty
         handler :: PoseidonException -> IO ()
         handler e = do
-            hPutStrLn stderr $ renderPoseidonException e
+            usePoseidonLogger DefaultLog . logError . T.pack $ renderPoseidonException e
             exitFailure
 
-runCmd :: Options -> IO ()
+runCmd :: Options -> PoseidonLogIO ()
 runCmd o = case o of
     CmdFstats opts -> runFstats opts
     CmdRAS opts    -> runRAS opts
