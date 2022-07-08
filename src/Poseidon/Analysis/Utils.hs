@@ -1,18 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Utils where
+module Poseidon.Analysis.Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
 import Control.Monad (forM)
 import           Data.Aeson                 ((.:))
-import           Data.Aeson.Types           (Object, Parser, Value (..))
+import           Data.Aeson.Types           (Object, Parser)
 import           Data.Char                  (isSpace)
 import           Data.HashMap.Strict        (toList)
 import           Data.Text                  (unpack)
 import qualified Data.Vector                as V
 import           Poseidon.EntitiesList      (PoseidonEntity (..),
-                                             SignedEntitiesList, entitiesListP,
+                                             SignedEntitiesList,
                                              indInfoConformsToEntitySpec)
 import           Poseidon.SecondaryTypes    (IndividualInfo (..))
 import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
@@ -40,7 +40,7 @@ addGroupDefs groupDefs indInfoRows = do
     return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
 parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
-parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, val) -> do
+parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, _) -> do
     entities <- obj .: key
     return (unpack key, entities)
 

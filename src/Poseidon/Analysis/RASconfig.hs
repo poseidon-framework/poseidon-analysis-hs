@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RASconfig where
+module Poseidon.Analysis.RASconfig where
 
-import           Utils                 (GroupDef, parseGroupDefsFromJSON)
+import           Poseidon.Analysis.Utils (GroupDef, parseGroupDefsFromJSON)
 
-import           Data.Aeson            (FromJSON, parseJSON, withObject,
-                                        (.:), (.:?))
-import           Poseidon.EntitiesList (EntitiesList, PoseidonEntity (..))
+import           Data.Aeson              (FromJSON, parseJSON, withObject, (.:),
+                                          (.:?))
+import           Poseidon.EntitiesList   (EntitiesList, PoseidonEntity (..))
 
 data PopConfig = PopConfigYamlStruct
     { popConfigGroupDef :: [GroupDef]

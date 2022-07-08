@@ -1,58 +1,53 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RAS where
+module Poseidon.Analysis.CLI.RAS where
 
-import           Utils                               (GenomPos,
-                                                      JackknifeMode (..),
-                                                      XerxesException (..),
-                                                      computeAlleleCount,
-                                                      computeAlleleFreq,
-                                                      computeJackknifeAdditive,
-                                                      computeJackknifeOriginal,
-                                                      addGroupDefs)
-import RASconfig (PopConfig(..))
+import           Poseidon.Analysis.RASconfig (PopConfig (..))
+import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
+                                              XerxesException (..),
+                                              addGroupDefs, computeAlleleCount,
+                                              computeAlleleFreq,
+                                              computeJackknifeAdditive,
+                                              computeJackknifeOriginal)
 
-import           Control.Exception                   (throwIO)
-import           Control.Foldl                       (FoldM (..), impurely,
-                                                      list, purely)
-import           Control.Monad                       (forM_, unless, when)
-import           Control.Monad.IO.Class              (MonadIO, liftIO)
-import qualified Data.ByteString                     as B
-import           Data.List                           (intercalate, nub, (\\))
-import qualified Data.Vector                         as V
-import qualified Data.Vector.Unboxed                 as VU
-import qualified Data.Vector.Unboxed.Mutable         as VUM
+import           Control.Exception           (throwIO)
+import           Control.Foldl               (FoldM (..), impurely, list,
+                                              purely)
+import           Control.Monad               (forM_, unless, when)
+import           Control.Monad.IO.Class      (MonadIO, liftIO)
+import qualified Data.ByteString             as B
+import           Data.List                   (intercalate, nub, (\\))
+import qualified Data.Vector                 as V
+import qualified Data.Vector.Unboxed         as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 
-import           Data.Yaml                           (decodeEither')
+import           Data.Yaml                   (decodeEither')
 -- import           Debug.Trace                 (trace)
-import           Lens.Family2                        (view)
+import           Lens.Family2                (view)
 
-import           Pipes                               (cat, (>->))
-import           Pipes.Group                         (chunksOf, foldsM,
-                                                      groupsBy)
-import qualified Pipes.Prelude                       as P
-import           Pipes.Safe                          (runSafeT)
-import           Poseidon.EntitiesList               (EntitiesList,
-                                                      PoseidonEntity (..),
-                                                      conformingEntityIndices,
-                                                      findNonExistentEntities,
-                                                      indInfoFindRelevantPackageNames,
-                                                      underlyingEntity)
-import           Poseidon.Package                    (PackageReadOptions (..),
-                                                      PoseidonPackage (..),
-                                                      defaultPackageReadOptions,
-                                                      getJointGenotypeData,
-                                                      getJointIndividualInfo,
-                                                      readPoseidonPackageCollection)
-import           Poseidon.SecondaryTypes             (IndividualInfo (..))
-import           SequenceFormats.Bed                 (filterThroughBed,
-                                                      readBedFile)
-import           SequenceFormats.Eigenstrat          (EigenstratSnpEntry (..),
-                                                      GenoEntry (..), GenoLine)
-import           SequenceFormats.Genomic             (genomicPosition)
-import           SequenceFormats.Utils               (Chrom (..))
-import           System.IO                           (IOMode (..), hPutStrLn,
-                                                      stderr, withFile)
+import           Pipes                       (cat, (>->))
+import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
+import qualified Pipes.Prelude               as P
+import           Pipes.Safe                  (runSafeT)
+import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
+                                              conformingEntityIndices,
+                                              findNonExistentEntities,
+                                              indInfoFindRelevantPackageNames,
+                                              underlyingEntity)
+import           Poseidon.Package            (PackageReadOptions (..),
+                                              PoseidonPackage (..),
+                                              defaultPackageReadOptions,
+                                              getJointGenotypeData,
+                                              getJointIndividualInfo,
+                                              readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes     (IndividualInfo (..))
+import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
+import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
+                                              GenoEntry (..), GenoLine)
+import           SequenceFormats.Genomic     (genomicPosition)
+import           SequenceFormats.Utils       (Chrom (..))
+import           System.IO                   (IOMode (..), hPutStrLn, stderr,
+                                              withFile)
 
 data FreqSpec = FreqNone
     | FreqK Int
@@ -103,7 +98,7 @@ runRAS rasOpts = do
     let outgroupSpec = case maybeOutgroup of
             Nothing -> []
             Just o  -> [o]
-    
+
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
     let allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++
@@ -116,7 +111,7 @@ runRAS rasOpts = do
     else do
         -- annotate all individuals with the new adhoc-group definitions where necessary
         let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
-        
+
         -- select only the packages needed for the statistics to be computed
         let relevantPackageNames = indInfoFindRelevantPackageNames (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
         let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
@@ -134,7 +129,7 @@ runRAS rasOpts = do
         let bedFilterFunc = case _rasBedFile rasOpts of
                 Nothing -> id
                 Just fn -> filterThroughBed (readBedFile fn) (genomicPosition . fst)
-        
+
         -- run the fold and retrieve the block data needed for RAS computations and output
         blockData <- runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData False False relevantPackages Nothing
@@ -164,7 +159,7 @@ runRAS rasOpts = do
                 let (val, err) = computeJackknifeAdditive counts vals
                 putStrLn . intercalate "\t" $ [show popLeft, show popRight, show (sum counts), show val, show err]
 
-        -- Compute and output F4 as the pairwise difference of F3. It's only complicated because of the Jackknife        
+        -- Compute and output F4 as the pairwise difference of F3. It's only complicated because of the Jackknife
         case _rasF4tableOutFile rasOpts of
             Nothing -> return ()
             Just outFn -> do
@@ -205,14 +200,14 @@ runRAS rasOpts = do
                                     hPutStrLn h . intercalate "\t" $ [show popLeft1, show popLeft2, show popRight, show (sum ras1_norms),
                                         show (sum ras2_norms), show rasf4_jackknife_estimate, show rasf4_jackknife_stderr,
                                         show (rasf4_jackknife_estimate / rasf4_jackknife_stderr)]
-        -- optionally output the block file 
+        -- optionally output the block file
         case _rasBlockTableFile rasOpts of
             Nothing -> return ()
             Just fn -> withFile fn WriteMode $ \h -> do
                 hPutStrLn h . intercalate "\t" $ ["Left", "Right", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "Norm", "RAS"]
-                forM_ (zip [0..] popLefts) $ \(i, popLeft) -> 
-                    forM_ (zip [0..] popRights) $ \(j, popRight) -> 
-                        forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) -> 
+                forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
+                    forM_ (zip [0..] popRights) $ \(j, popRight) ->
+                        forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) ->
                             hPutStrLn h . intercalate "\t" $ [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
                                 show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
                                 show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]

@@ -1,64 +1,64 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module FStats (
+module Poseidon.Analysis.CLI.FStats (
       FStatSpec(..)
     , P.ParseError
     , P.runParser
     , FstatsOptions(..)
     , JackknifeMode(..)
-    , runFstats
+    , runFstats,
+    collectStatSpecGroups
 ) where
 
-import           FStatsConfig                (AscertainmentSpec (..),
-                                              FStatSpec (..),
-                                              FStatType (..),
-                                              FStatInput,
-                                              readFstatInput)
-import           Utils                       (GenomPos,
-                                              JackknifeMode (..),
-                                              computeAlleleCount,
-                                              computeAlleleFreq,
-                                              computeJackknifeOriginal,
-                                              addGroupDefs)
+import           Poseidon.Analysis.FStatsConfig (AscertainmentSpec (..),
+                                                 FStatInput, FStatSpec (..),
+                                                 FStatType (..), readFstatInput)
+import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
+                                                 addGroupDefs,
+                                                 computeAlleleCount,
+                                                 computeAlleleFreq,
+                                                 computeJackknifeOriginal)
 
 
-import           Control.Foldl               (FoldM (..), impurely, list,
-                                              purely)
-import           Control.Monad               (forM, forM_, unless)
-import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import           Data.IORef                  (IORef, modifyIORef', newIORef,
-                                              readIORef, writeIORef)
-import           Data.List                   (intercalate, nub, (\\))
-import Data.MemoCombinators.Class (Memoizable(..))
-import qualified Data.Vector                 as V
-import qualified Data.Vector.Unboxed         as VU
-import qualified Data.Vector.Unboxed.Mutable as VUM
+import           Control.Foldl                  (FoldM (..), impurely, list,
+                                                 purely)
+import           Control.Monad                  (forM, forM_, unless)
+import           Control.Monad.IO.Class         (MonadIO, liftIO)
+import           Data.IORef                     (IORef, modifyIORef', newIORef,
+                                                 readIORef, writeIORef)
+import           Data.List                      (intercalate, nub, (\\))
+import qualified Data.Map                       as M
+import qualified Data.Vector                    as V
+import qualified Data.Vector.Unboxed            as VU
+import qualified Data.Vector.Unboxed.Mutable    as VUM
 -- import           Debug.Trace                 (trace)
-import           Lens.Family2                (view)
-import           Pipes                       (cat, (>->))
-import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
-import qualified Pipes.Prelude               as P
-import           Pipes.Safe                  (runSafeT)
-import           Poseidon.EntitiesList       (PoseidonEntity (..),
-                                              conformingEntityIndices,
-                                              findNonExistentEntities,
-                                              underlyingEntity,
-                                              indInfoFindRelevantPackageNames)
-import           Poseidon.Package            (PackageReadOptions (..),
-                                              PoseidonPackage (..),
-                                              defaultPackageReadOptions,
-                                              getJointGenotypeData,
-                                              getJointIndividualInfo,
-                                              readPoseidonPackageCollection)
-import           Poseidon.SecondaryTypes     (IndividualInfo (..))
-import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..), GenoLine)
-import           SequenceFormats.Utils       (Chrom)
-import           System.IO                   (IOMode (..), hPutStrLn,
-                                              stderr, withFile)
-import           Text.Layout.Table           (asciiRoundS, column, def, expand,
-                                              rowsG, tableString, titlesH)
-import qualified Text.Parsec                 as P
-import           Text.Printf                 (printf)
+import           Lens.Family2                   (view)
+import           Pipes                          (cat, (>->))
+import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
+import qualified Pipes.Prelude                  as P
+import           Pipes.Safe                     (runSafeT)
+import           Poseidon.EntitiesList          (PoseidonEntity (..),
+                                                 conformingEntityIndices,
+                                                 findNonExistentEntities,
+                                                 indInfoFindRelevantPackageNames,
+                                                 underlyingEntity)
+import           Poseidon.Package               (PackageReadOptions (..),
+                                                 PoseidonPackage (..),
+                                                 defaultPackageReadOptions,
+                                                 getJointGenotypeData,
+                                                 getJointIndividualInfo,
+                                                 readPoseidonPackageCollection)
+import           Poseidon.SecondaryTypes        (IndividualInfo (..))
+import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
+                                                 GenoLine)
+import           SequenceFormats.Utils          (Chrom)
+import           System.IO                      (IOMode (..), hPutStrLn, stderr,
+                                                 withFile)
+import           Text.Layout.Table              (asciiRoundS, column, def,
+                                                 expand, rowsG, tableString,
+                                                 titlesH)
+import qualified Text.Parsec                    as P
+import           Text.Printf                    (printf)
 
 -- | A datatype representing the command line options for the F-Statistics command
 data FstatsOptions = FstatsOptions
@@ -170,32 +170,33 @@ summaryPrintFstats (FStatSpec fType slots maybeAsc) =
             Just _  -> "_ascertained"
     in  show fType ++ "("  ++ intercalate "," (map show slots) ++ ")" ++ ascString
 
-type EntityIndicesLookup     = PoseidonEntity -> [Int]
-type EntityAlleleCountLookup = PoseidonEntity -> (Int, Int)
-type EntityAlleleFreqLookup  = PoseidonEntity -> Maybe Double
+type EntityIndicesLookup     = M.Map PoseidonEntity [Int]
+type EntityAlleleCountLookup = M.Map PoseidonEntity (Int, Int)
+type EntityAlleleFreqLookup  = M.Map PoseidonEntity (Maybe Double)
 
 -- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
 buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> m (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs = do
-    let getI = memoize $ (flip conformingEntityIndices) indInfo . return
+    let entityIndicesLookup =
+            M.fromList [(s, conformingEntityIndices [s] indInfo) | s <- collectStatSpecGroups fStatSpecs]
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType slots _) -> do
             case fType of
                 F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
                 _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
-    return $ FoldM (step getI fStatSpecs blockAccum) (initialize blockAccum) (extract blockAccum)
+    return $ FoldM (step entityIndicesLookup fStatSpecs blockAccum) (initialize blockAccum) (extract blockAccum)
   where
     step :: (MonadIO m) => EntityIndicesLookup -> [FStatSpec] -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
-    step getI fStatSpecs blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step entIndLookup fStatSpecs blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         -- this function is called for every SNP.
         startPos <- liftIO $ readIORef (accMaybeStartPos blockAccum)
         case startPos of
             Nothing -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
             Just _  -> return ()
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
-        let alleleCountLookupF = memoize $ computeAlleleCount genoLine . getI 
-            alleleFreqLookupF  = memoize $ computeAlleleFreq  genoLine . getI 
+        let alleleCountLookupF = M.map (\indices -> computeAlleleCount genoLine indices) entIndLookup
+            alleleFreqLookupF  = M.map (\indices -> computeAlleleFreq  genoLine indices) entIndLookup
         forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
@@ -226,8 +227,8 @@ buildStatSpecsFold indInfo fStatSpecs = do
 computeFStatAccumulators :: FStatSpec -> EntityAlleleCountLookup -> EntityAlleleFreqLookup -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
 -- but in case of F3, for example, also a second accumulator and its normaliser for capturing the heterozygosity
 computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFreqF =
-    let caf = alleleFreqF -- this returns Nothing if missing data
-        cac e = case alleleCountF e of -- this also returns Nothing if missing data.
+    let caf = (alleleFreqF M.!) -- this returns Nothing if missing data
+        cac e = case alleleCountF M.! e of -- this also returns Nothing if missing data.
             (_, 0) -> Nothing
             x      -> Just x
         ascCond = case maybeAsc of
@@ -301,7 +302,12 @@ pacReadOpts = defaultPackageReadOptions {
     }
 
 collectStatSpecGroups :: [FStatSpec] -> [PoseidonEntity]
-collectStatSpecGroups statSpecs = nub $ concat [slots | FStatSpec _ slots _ <- statSpecs]
+collectStatSpecGroups statSpecs = nub $ do
+    FStatSpec _ slots maybeAsc <- statSpecs
+    case maybeAsc of
+        Just (AscertainmentSpec (Just og) ref _ _) -> slots ++ [og, ref]
+        Just (AscertainmentSpec Nothing ref _ _)   -> slots ++ [ref]
+        Nothing                                    -> slots
 
 processBlocks :: [FStatSpec] -> [BlockData] -> [(Double, Double)]
 processBlocks statSpecs blocks = do

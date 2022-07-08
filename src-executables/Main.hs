@@ -1,27 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           FStats                     (FstatsOptions (..),
-                                             runFstats, runParser)
-import           FStatsConfig               (fStatSpecParser, FStatInput(..))
-import           RAS                        (FreqSpec (..), RASOptions (..),
-                                             runRAS)
-import           Utils                      (JackknifeMode (..))
+import           Poseidon.Analysis.CLI.FStats   (FstatsOptions (..), runFstats,
+                                                 runParser)
+import           Poseidon.Analysis.CLI.RAS      (FreqSpec (..), RASOptions (..),
+                                                 runRAS)
+import           Poseidon.Analysis.FStatsConfig (FStatInput (..),
+                                                 fStatSpecParser)
+import           Poseidon.Analysis.Utils        (JackknifeMode (..))
 
-import           Control.Applicative        ((<|>))
-import           Control.Exception          (catch)
-import           Data.ByteString.Char8      (pack, splitWith)
-import           Data.List                  (intercalate)
-import           Data.Version               (showVersion)
-import qualified Options.Applicative        as OP
-import           Paths_poseidon_analysis_hs (version)
-import           Poseidon.PoseidonVersion   (showPoseidonVersion,
-                                             validPoseidonVersions)
-import           Poseidon.Utils             (PoseidonException (..),
-                                             renderPoseidonException)
-import           SequenceFormats.Utils      (Chrom (..))
-import           System.Exit                (exitFailure)
-import           System.IO                  (hPutStrLn, stderr)
-import           Text.Read                  (readEither)
+import           Control.Applicative            ((<|>))
+import           Control.Exception              (catch)
+import           Data.ByteString.Char8          (pack, splitWith)
+import           Data.List                      (intercalate)
+import           Data.Version                   (showVersion)
+import qualified Options.Applicative            as OP
+import           Paths_poseidon_analysis_hs     (version)
+import           Poseidon.PoseidonVersion       (showPoseidonVersion,
+                                                 validPoseidonVersions)
+import           Poseidon.Utils                 (PoseidonException (..),
+                                                 renderPoseidonException)
+import           SequenceFormats.Utils          (Chrom (..))
+import           System.Exit                    (exitFailure)
+import           System.IO                      (hPutStrLn, stderr)
+import           Text.Read                      (readEither)
 
 data Options = CmdFstats FstatsOptions
     | CmdRAS RASOptions
