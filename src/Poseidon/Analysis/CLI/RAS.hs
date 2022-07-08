@@ -10,6 +10,7 @@ import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
                                               computeJackknifeAdditive,
                                               computeJackknifeOriginal)
 
+import           Colog                       (logError, logInfo)
 import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
@@ -17,6 +18,7 @@ import           Control.Monad               (forM_, unless, when)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import qualified Data.ByteString             as B
 import           Data.List                   (intercalate, nub, (\\))
+import           Data.Text                   (pack)
 import qualified Data.Vector                 as V
 import qualified Data.Vector.Unboxed         as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
@@ -41,11 +43,13 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointIndividualInfo,
                                               readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes     (IndividualInfo (..))
+import           Poseidon.Utils              (PoseidonLogIO)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
 import           SequenceFormats.Genomic     (genomicPosition)
 import           SequenceFormats.Utils       (Chrom (..))
+import           System.Exit                 (exitFailure)
 import           System.IO                   (IOMode (..), hPutStrLn, stderr,
                                               withFile)
 
@@ -78,21 +82,21 @@ data BlockData = BlockData
     }
     deriving (Show)
 
-runRAS :: RASOptions -> IO ()
+runRAS :: RASOptions -> PoseidonLogIO ()
 runRAS rasOpts = do
     -- reading in the configuration file
     PopConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
-    unless (null groupDefs) $ hPutStrLn stderr $ "Found group definitions: " ++ show groupDefs
-    hPutStrLn stderr $ "Found left populations: " ++ show popLefts
-    hPutStrLn stderr $ "Found right populations: " ++ show popRights
+    unless (null groupDefs) . logInfo . pack "Found group definitions: " ++ show groupDefs
+    logInfo $ "Found left populations: " ++ show popLefts
+    logInfo $ "Found right populations: " ++ show popRights
     case maybeOutgroup of
         Nothing -> return ()
-        Just o  -> hPutStrLn stderr $ "Found outgroup: " ++ show o
+        Just o  -> logInfo $ "Found outgroup: " ++ show o
 
     -- reading in Poseidon packages
     let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
     allPackages <- readPoseidonPackageCollection pacReadOpts (_rasBaseDirs rasOpts)
-    hPutStrLn stderr ("Loaded " ++ show (length allPackages) ++ " packages")
+    logInfo $ "Loaded " ++ show (length allPackages) ++ " packages"
 
     -- if no outgroup is given, set it as empty list
     let outgroupSpec = case maybeOutgroup of
@@ -107,7 +111,8 @@ runRAS rasOpts = do
     let jointIndInfoAll = getJointIndividualInfo allPackages
     let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
     if not. null $ missingEntities then
-        hPutStrLn stderr $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+        logError $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+        exitFailure
     else do
         -- annotate all individuals with the new adhoc-group definitions where necessary
         let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
@@ -115,7 +120,7 @@ runRAS rasOpts = do
         -- select only the packages needed for the statistics to be computed
         let relevantPackageNames = indInfoFindRelevantPackageNames (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
         let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
-        hPutStrLn stderr $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+        logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
         mapM_ (hPutStrLn stderr . posPacTitle) relevantPackages
 
         -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
@@ -146,10 +151,10 @@ runRAS rasOpts = do
             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
 
         -- outputting and computing results
-        liftIO $ hPutStrLn stderr "collating results"
+        logInfo "collating results"
 
         -- Output for the standard output (a simple table with RAS estimates, using the pretty-printing Text.Table.Layout package )
-        putStrLn . intercalate "\t" $ ["Left", "Right", "Norm", "RAS", "StdErr"]
+        liftIO . putStrLn . intercalate "\t" $ ["Left", "Right", "Norm", "RAS", "StdErr"]
         forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
             forM_ (zip [0..] popRights) $ \(j, popRight) -> do
                 -- get the raw counts for the Jackknife computation
@@ -157,13 +162,13 @@ runRAS rasOpts = do
                     vals = [(blockVals bd !! i) !! j | bd <- blockData]
                 -- compute jackknife estimate and standard error (see Utils.hs for implementation of the Jackknife)
                 let (val, err) = computeJackknifeAdditive counts vals
-                putStrLn . intercalate "\t" $ [show popLeft, show popRight, show (sum counts), show val, show err]
+                liftIO . putStrLn . intercalate "\t" $ [show popLeft, show popRight, show (sum counts), show val, show err]
 
         -- Compute and output F4 as the pairwise difference of F3. It's only complicated because of the Jackknife
         case _rasF4tableOutFile rasOpts of
             Nothing -> return ()
             Just outFn -> do
-                withFile outFn WriteMode $ \h -> do
+                liftIO . withFile outFn WriteMode $ \h -> do
                     hPutStrLn h $ intercalate "\t" ["Left1", "Left2", "Right", "Norm1", "Norm2", "RAS-F4", "StdErr", "Z score"]
                     -- loop over all possible left1, left2 and rights
                     forM_ (zip [0..] popLefts) $ \(l1, popLeft1) ->
@@ -203,12 +208,12 @@ runRAS rasOpts = do
         -- optionally output the block file
         case _rasBlockTableFile rasOpts of
             Nothing -> return ()
-            Just fn -> withFile fn WriteMode $ \h -> do
+            Just fn -> liftIO . withFile fn WriteMode $ \h -> do
                 hPutStrLn h . intercalate "\t" $ ["Left", "Right", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "Norm", "RAS"]
                 forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
                     forM_ (zip [0..] popRights) $ \(j, popRight) ->
                         forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) ->
-                            hPutStrLn h . intercalate "\t" $ [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
+                            liftIO . hPutStrLn h . intercalate "\t" $ [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
                                 show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
                                 show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]
   where
@@ -239,11 +244,11 @@ weightedAverage vals weights =
         denom = sum weights
     in  num / denom
 
-readPopConfig :: FilePath -> IO PopConfig
+readPopConfig :: FilePath -> PoseidonLogIO PopConfig
 readPopConfig fn = do
-    bs <- B.readFile fn
+    bs <- liftIO $ B.readFile fn
     case decodeEither' bs of
-        Left err -> throwIO $ PopConfigYamlException fn (show err)
+        Left err -> liftIO . throwIO $ PopConfigYamlException fn (show err)
         Right x  -> return x
 
 buildRasFold :: (MonadIO m) => [IndividualInfo] -> FreqSpec -> FreqSpec -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData

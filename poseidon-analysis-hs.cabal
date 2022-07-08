@@ -19,7 +19,8 @@ library
     hs-source-dirs:     src
     build-depends:      base, poseidon-hs, optparse-applicative, sequence-formats, foldl,
                         exceptions, vector, lens-family, pipes, pipes-group, pipes-safe,
-                        table-layout, parsec, aeson, bytestring, text, yaml, unordered-containers, containers
+                        table-layout, parsec, aeson, bytestring, text, yaml, unordered-containers, containers,
+                        co-log
     default-language:   Haskell2010
 
 executable xerxes
