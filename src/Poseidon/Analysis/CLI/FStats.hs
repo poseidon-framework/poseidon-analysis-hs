@@ -246,9 +246,10 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
                         x <- caf ascRef
                         if x > 0.5 then return (1.0 - x) else return x -- use minor allele frequency if no outgroup is given
                     Just og -> do -- Maybe Monad
-                        ogX <- caf og
+                        (ogNonRef, ogNonMiss) <- cac og
                         x <- caf ascRef
-                        if (ogX < 0.5) then return x else return (1.0 - x)
+                        if ogNonRef == 0 then return x else
+                            if ogNonRef == ogNonMiss then return (1.0 - x) else Nothing
                 return $ ascFreq >= lo && ascFreq <= hi
         applyAsc x = do -- Maybe Monad
             cond <- ascCond

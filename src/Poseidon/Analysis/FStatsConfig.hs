@@ -170,7 +170,7 @@ fstatSlotLength fStatType = case fStatType of
     FST        -> 2
     PWM        -> 2
     Het        -> 1
-    F3vanilla  -> 2
+    F3vanilla  -> 3
     FSTvanilla -> 2
     F2vanilla  -> 2
 
