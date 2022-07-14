@@ -1,3 +1,11 @@
+# V0.2.1.0: Optimized fstats with allele-frequency lookups
+
+This release internally optimizes the core loop by creating lookup tables for allele frequencies, so that they can be reused for the various statistics. 
+
+Code has been refactored and unit tests introduced.
+
+Logging is partly implemented with Co-Log now, but not fully yet.
+
 # V0.2.0.0: New config file input, ascertainment and adhoc-groups Latest
 
 This is a big release with three new features in Xerxes fstats:
