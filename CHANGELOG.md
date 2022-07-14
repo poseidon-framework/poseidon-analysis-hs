@@ -1,3 +1,4 @@
+- 0.2.0.4: Fixed bug with ascertainment: Polymorphic sites in the ascertainment-outgroup now get filtered out.
 - 0.2.0.3: Fixed nr of arguments bug with F3vanilla
 - 0.2.0.2: Removed redundant log output after loading the config file.
 - 0.2.0.1: fixed spaceleak in the final table-printing in ras

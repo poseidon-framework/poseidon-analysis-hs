@@ -248,9 +248,10 @@ computeFStatAccumulators (FStat fType indices ascOgI ascRefI ascLo ascHi) gL =
                         x <- ascRefX
                         if x > 0.5 then return (1.0 - x) else return x -- use minor allele frequency if no outgroup is given
                     else do -- Maybe Monad
-                        ogX <- caf ascOgI
+                        (ogNonRef, ogNonMiss) <- cac ascOgI
                         x <- ascRefX
-                        if (ogX < 0.5) then return x else return (1.0 - x)
+                        if ogNonRef == 0 then return x else
+                            if ogNonRef == ogNonMiss then return (1.0 - x) else Nothing
                 return $ ascFreq >= ascLo && ascFreq <= ascHi
         applyAsc x = do -- Maybe Monad
             cond <- ascCond
