@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# stack run xerxes -- fstats --statFile fstats.txt -d ../../published_data/2012_PattersonGenetics -f testTable.txt
+# stack run xerxes -- fstats --statFile fstats.txt -d ../../../published_data/2012_PattersonGenetics -f testTable.txt
 
-stack run xerxes -- fstats --statConfig config.yaml -d ../../../published_data
+stack run xerxes -- fstats --statConfig config.yaml -d ../../../published_data --maxSnps 100000
 
 # .---------------------------------.------------------------.-----------------------.---------------------.
 # |            Statistic            |        Estimate        |        StdErr         |       Z score       |
