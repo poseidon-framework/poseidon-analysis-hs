@@ -4,7 +4,7 @@ module Poseidon.Analysis.Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
-import Control.Monad (forM)
+import           Control.Monad              (forM)
 import           Data.Aeson                 ((.:))
 import           Data.Aeson.Types           (Object, Parser)
 import           Data.Char                  (isSpace)

@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Poseidon.Analysis.CLI.FStats (
       FStatSpec(..)
