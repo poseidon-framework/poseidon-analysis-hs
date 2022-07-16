@@ -7,7 +7,8 @@ import           Poseidon.Analysis.CLI.RAS        (FreqSpec (..),
 import           Poseidon.Analysis.FStatsConfig   (FStatInput (..),
                                                    fStatSpecParser)
 import           Poseidon.Analysis.Utils          (JackknifeMode (..))
-import           Poseidon.Generator.CLI.AdmixPops (AdmixPopsOptions(..), runAdmixPops)
+import           Poseidon.Generator.CLI.AdmixPops (AdmixPopsOptions (..),
+                                                   runAdmixPops)
 
 import           Colog                            (logError)
 import           Control.Applicative              ((<|>))
@@ -18,6 +19,9 @@ import qualified Data.Text                        as T
 import           Data.Version                     (showVersion)
 import qualified Options.Applicative              as OP
 import           Paths_poseidon_analysis_hs       (version)
+import           Poseidon.Generator.Parsers       (readIndWithAdmixtureSetString)
+import           Poseidon.Generator.Types         (IndWithAdmixtureSet)
+import           Poseidon.GenotypeData            (GenotypeFormatSpec (..))
 import           Poseidon.PoseidonVersion         (showPoseidonVersion,
                                                    validPoseidonVersions)
 import           Poseidon.Utils                   (LogMode (..),
@@ -29,9 +33,6 @@ import           SequenceFormats.Utils            (Chrom (..))
 import           System.Exit                      (exitFailure)
 import           System.IO                        (hPutStrLn, stderr)
 import           Text.Read                        (readEither)
-import Poseidon.Generator.Types (IndWithAdmixtureSet)
-import Poseidon.Generator.Parsers (readIndWithAdmixtureSetString)
-import Poseidon.GenotypeData (GenotypeFormatSpec (..))
 
 data Options =
       CmdFstats FstatsOptions
@@ -53,8 +54,8 @@ main = do
 
 runCmd :: Options -> PoseidonLogIO ()
 runCmd o = case o of
-    CmdFstats opts -> runFstats opts
-    CmdRAS opts    -> runRAS opts
+    CmdFstats opts    -> runFstats opts
+    CmdRAS opts       -> runRAS opts
     CmdAdmixPops opts -> runAdmixPops opts
 
 optParserInfo :: OP.ParserInfo Options
@@ -240,7 +241,7 @@ parseIndWithAdmixtureSetFromFile = OP.option (Just <$> OP.str) (OP.long "admixFi
 
 parseMarginalizeMissing :: OP.Parser Bool
 parseMarginalizeMissing = OP.switch (
-    OP.long "marginalizeMissing" <> 
+    OP.long "marginalizeMissing" <>
     OP.help "ignore missing SNPs in the per-population genotype frequency calculation \
             \(except all individuals have missing information for a given SNP)"
     )

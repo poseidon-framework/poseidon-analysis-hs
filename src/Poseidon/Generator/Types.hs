@@ -12,9 +12,9 @@ import           Poseidon.Janno
 import           SequenceFormats.Eigenstrat (GenoEntry (..))
 
 data IndWithAdmixtureSet = IndWithAdmixtureSet {
-      admixInd  :: String
-    , admixUnit :: String
-    , admixSet  :: AdmixtureSet
+      _admixInd  :: String
+    , _admixUnit :: String
+    , _admixSet  :: AdmixtureSet
 }
 
 instance Show IndWithAdmixtureSet where
@@ -23,7 +23,7 @@ instance Show IndWithAdmixtureSet where
         "(" ++ intercalate "+" (map show _popFracList) ++ ")"
 
 data AdmixtureSet = AdmixtureSet {
-    popFracList :: [PopulationWithFraction]
+    _popFracList :: [PopulationWithFraction]
 } deriving (Show)
 
 data PopulationWithFraction = PopulationWithFraction {

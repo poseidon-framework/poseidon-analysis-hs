@@ -37,9 +37,9 @@ data AdmixPopsOptions = AdmixPopsOptions {
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
-      _readOptVerbose          = True
-    , _readOptStopOnDuplicates = True
-    , _readOptIgnoreChecksums  = False
+      _readOptVerbose          = False
+    , _readOptStopOnDuplicates = False
+    , _readOptIgnoreChecksums  = True
     , _readOptIgnoreGeno       = False
     , _readOptGenoCheck        = True
     }
@@ -51,21 +51,15 @@ runAdmixPops (AdmixPopsOptions baseDirs popsWithFracsDirect popsWithFracsFile ma
         Nothing -> return []
         Just f  -> liftIO $ readIndWithAdmixtureSetFromFile f
     let requestedInds = popsWithFracsDirect ++ popsWithFracsFromFile
-        popsWithFracs = map (popFracList . admixSet) requestedInds
-        pops = map (map pop) popsWithFracs
-    logInfo $ pack "Checking chimeras"
-    liftIO $ mapM_ (hPrint stderr) (take 5 requestedInds)
-    when (length requestedInds > 5) $ do
-        liftIO $ hPutStrLn stderr "..."
     -- validating input
-    let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map admixInd requestedInds
-    liftIO $ unless (null individualsGrouped) $ do
-                throwIO $ PoseidonGeneratorCLIParsingException $
-                    "Duplicate individual names: " ++ intercalate "," (nub $ concat individualsGrouped)
-    liftIO $ mapM_ checkIndsWithAdmixtureSets requestedInds
+    logInfo $ pack "Checking chimeras"
+    logInfo $ pack $ renderRequestedInds requestedInds
+    liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
     allPackages <- readPoseidonPackageCollection pacReadOpts baseDirs
     -- determine relevant packages and indices
+    let popsWithFracs = map (_popFracList . _admixSet) requestedInds
+        pops = map (map pop) popsWithFracs
     relevantPackages <- liftIO $ filterPackagesByPops (concat pops) allPackages
     popsFracsInds <- liftIO $  mapM (mapM (`extractIndsPerPop` relevantPackages)) popsWithFracs
     -- compile genotype data structure
@@ -83,7 +77,7 @@ runAdmixPops (AdmixPopsOptions baseDirs popsWithFracsDirect popsWithFracsFile ma
     liftIO $ runSafeT $ do
         (_, eigenstratProd) <- getJointGenotypeData SimpleLog False relevantPackages Nothing
         let [outG, outS, outI] = map (outDir </>) [outGeno, outSnp, outInd]
-            newIndEntries = map (\x -> EigenstratIndEntry (admixInd x) Unknown (admixUnit x)) requestedInds
+            newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
         let outConsumer = case outFormat of
                 GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                 GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
@@ -91,15 +85,30 @@ runAdmixPops (AdmixPopsOptions baseDirs popsWithFracsDirect popsWithFracsFile ma
             printSNPCopyProgress >->
             P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
             outConsumer
-        liftIO $ hPutStrLn stderr "Done"
+    logInfo $ pack "Done"
 
-checkIndsWithAdmixtureSets :: IndWithAdmixtureSet -> IO ()
-checkIndsWithAdmixtureSets cur@(IndWithAdmixtureSet _ _ (AdmixtureSet _popFracList)) = do
-    checkPopFracList _popFracList
+renderRequestedInds :: [IndWithAdmixtureSet] -> String
+renderRequestedInds requestedInds =
+    let indString = intercalate ";" $ map show $ take 5 requestedInds
+    in if length requestedInds > 5
+       then indString ++ "..."
+       else indString
+
+checkIndsWithAdmixtureSets :: [IndWithAdmixtureSet] -> IO ()
+checkIndsWithAdmixtureSets requestedInds = do
+    checkDuplicateIndNames requestedInds
+    mapM_ checkPopFracList requestedInds
     where
-        checkPopFracList :: [PopulationWithFraction] -> IO ()
-        checkPopFracList xs = do
-            let fracs = map frac xs
+        checkDuplicateIndNames :: [IndWithAdmixtureSet] -> IO ()
+        checkDuplicateIndNames requestedInds =
+            let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map _admixInd requestedInds
+            in unless (null individualsGrouped) $ do
+                throwIO $ PoseidonGeneratorCLIParsingException $
+                    "Duplicate individual names: " ++ intercalate "," (nub $ concat individualsGrouped)
+        checkPopFracList :: IndWithAdmixtureSet -> IO ()
+        checkPopFracList cur = do
+            let xs = (_popFracList . _admixSet) cur
+                fracs = map frac xs
             when (sum fracs /= 100) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Fractions in " ++ show cur ++ " do not to sum to 100%"
