@@ -19,9 +19,13 @@ import qualified Data.Text                        as T
 import           Data.Version                     (showVersion)
 import qualified Options.Applicative              as OP
 import           Paths_poseidon_analysis_hs       (version)
+import           Poseidon.CLI.List                (RepoLocationSpec (..))
 import           Poseidon.Generator.Parsers       (readIndWithAdmixtureSetString)
 import           Poseidon.Generator.Types         (IndWithAdmixtureSet)
-import           Poseidon.GenotypeData            (GenotypeFormatSpec (..))
+import           Poseidon.GenotypeData            (GenoDataSource (..),
+                                                   GenotypeDataSpec (..),
+                                                   GenotypeFormatSpec (..),
+                                                   SNPSetSpec (..))
 import           Poseidon.PoseidonVersion         (showPoseidonVersion,
                                                    validPoseidonVersions)
 import           Poseidon.Utils                   (LogMode (..),
@@ -31,6 +35,8 @@ import           Poseidon.Utils                   (LogMode (..),
                                                    usePoseidonLogger)
 import           SequenceFormats.Utils            (Chrom (..))
 import           System.Exit                      (exitFailure)
+import           System.FilePath                  (dropExtension, takeExtension,
+                                                   (<.>))
 import           System.IO                        (hPutStrLn, stderr)
 import           Text.Read                        (readEither)
 
@@ -97,12 +103,6 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseFstatInput
                                 <*> parseMaxSnps
                                 <*> parseTableOutFile
-
-parseBasePaths :: OP.Parser [FilePath]
-parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>
-    OP.short 'd' <>
-    OP.metavar "DIR" <>
-    OP.help "a base directory to search for Poseidon Packages (could be a Poseidon repository)"))
 
 parseJackknife :: OP.Parser JackknifeMode
 parseJackknife = OP.option (OP.eitherReader readJackknifeString) (OP.long "jackknife" <> OP.short 'j' <>
@@ -213,12 +213,82 @@ parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An opt
     \included in the analysis." <> OP.value Nothing)
 
 admixPopsOptParser :: OP.Parser AdmixPopsOptions
-admixPopsOptParser = AdmixPopsOptions <$> parseBasePaths
+admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseIndWithAdmixtureSetDirect
                                       <*> parseIndWithAdmixtureSetFromFile
                                       <*> parseMarginalizeMissing
                                       <*> parseOutGenotypeFormat
                                       <*> parseOutPath
+
+parseGenoDataSources :: OP.Parser [GenoDataSource]
+parseGenoDataSources = OP.some parseGenoDataSource
+
+parseGenoDataSource :: OP.Parser GenoDataSource
+parseGenoDataSource = (PacBaseDir <$> parseBasePath) <|> (GenoDirect <$> parseInGenotypeDataset)
+
+parseBasePaths :: OP.Parser [FilePath]
+parseBasePaths = OP.some parseBasePath
+
+parseBasePath :: OP.Parser FilePath
+parseBasePath = OP.strOption (OP.long "baseDir" <>
+    OP.short 'd' <>
+    OP.metavar "DIR" <>
+    OP.help "a base directory to search for Poseidon Packages (could be a Poseidon repository)")
+
+parseInGenotypeDataset :: OP.Parser GenotypeDataSpec
+parseInGenotypeDataset = createGeno <$> (parseInGenoOne <|> parseInGenoSep) <*> pure Nothing
+    where
+        createGeno :: GenoInput -> Maybe SNPSetSpec -> GenotypeDataSpec
+        createGeno (a,b,c,d) e = GenotypeDataSpec a b Nothing c Nothing d Nothing e
+
+type GenoInput = (GenotypeFormatSpec, FilePath, FilePath, FilePath)
+
+parseInGenoOne :: OP.Parser GenoInput
+parseInGenoOne = OP.option (OP.eitherReader readGenoInput) (
+        OP.short 'p' <> OP.long "genoOne" <> OP.help
+            "one of the input genotype data files. Expects\
+            \ .bed  or .bim or .fam for PLINK and\
+            \ .geno or .snp or .ind for EIGENSTRAT.\
+            \ The other files must be in the same directory and must have the same base name")
+    where
+        readGenoInput :: FilePath -> Either String GenoInput
+        readGenoInput p = makeGenoInput (dropExtension p) (takeExtension p)
+        makeGenoInput path ext
+            | ext `elem` [".geno", ".snp", ".ind"] =
+                Right (GenotypeFormatEigenstrat,(path <.> "geno"),(path <.> "snp"),(path <.> "ind"))
+            | ext `elem` [".bed", ".bim", ".fam"]  =
+                Right (GenotypeFormatPlink,     (path <.> "bed"), (path <.> "bim"),(path <.> "fam"))
+            | otherwise = Left $ "unknown file extension: " ++ ext
+
+parseInGenoSep :: OP.Parser GenoInput
+parseInGenoSep = (,,,) <$> parseInGenotypeFormat <*> parseInGenoFile <*> parseInSnpFile <*> parseInIndFile
+
+parseInGenotypeFormat :: OP.Parser GenotypeFormatSpec
+parseInGenotypeFormat = OP.option (OP.eitherReader readGenotypeFormat) (
+    OP.long "inFormat" <>
+    OP.help "the format of the input genotype data: EIGENSTRAT or PLINK\
+            \ (only necessary for data input with --genoFile + --snpFile + --indFile)")
+  where
+    readGenotypeFormat :: String -> Either String GenotypeFormatSpec
+    readGenotypeFormat s = case s of
+        "EIGENSTRAT" -> Right GenotypeFormatEigenstrat
+        "PLINK"      -> Right GenotypeFormatPlink
+        _            -> Left "must be EIGENSTRAT or PLINK"
+
+parseInGenoFile :: OP.Parser FilePath
+parseInGenoFile = OP.strOption (
+    OP.long "genoFile" <>
+    OP.help "the input geno file path")
+
+parseInSnpFile :: OP.Parser FilePath
+parseInSnpFile = OP.strOption (
+    OP.long "snpFile" <>
+    OP.help "the input snp file path")
+
+parseInIndFile :: OP.Parser FilePath
+parseInIndFile = OP.strOption (
+    OP.long "indFile" <>
+    OP.help "the input ind file path")
 
 parseIndWithAdmixtureSetDirect :: OP.Parser [IndWithAdmixtureSet]
 parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (

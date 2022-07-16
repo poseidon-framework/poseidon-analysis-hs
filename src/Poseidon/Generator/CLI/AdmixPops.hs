@@ -27,7 +27,7 @@ import           System.FilePath               ((</>))
 import           System.IO                     (hPrint, hPutStrLn, stderr)
 
 data AdmixPopsOptions = AdmixPopsOptions {
-      _admixBaseDirs                :: [FilePath]
+      _admixGenoSources             :: [GenoDataSource]
     , _admixIndWithAdmixtureSet     :: [IndWithAdmixtureSet]
     , _admixIndWithAdmixtureSetFile :: Maybe FilePath
     , _admixMarginalizeMissing      :: Bool
@@ -45,7 +45,7 @@ pacReadOpts = defaultPackageReadOptions {
     }
 
 runAdmixPops :: AdmixPopsOptions -> PoseidonLogIO ()
-runAdmixPops (AdmixPopsOptions baseDirs popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outDir) = do
+runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outDir) = do
     -- compile individuals
     popsWithFracsFromFile <- case popsWithFracsFile of
         Nothing -> return []
@@ -56,7 +56,10 @@ runAdmixPops (AdmixPopsOptions baseDirs popsWithFracsDirect popsWithFracsFile ma
     logInfo $ pack $ renderRequestedInds requestedInds
     liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
-    allPackages <- readPoseidonPackageCollection pacReadOpts baseDirs
+    properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
+    pseudoPackages <- liftIO $ mapM makePseudoPackageFromGenotypeData $ [getGenoDirect x | x@GenoDirect {} <- genoSources]
+    logInfo $ pack $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
+    let allPackages = properPackages ++ pseudoPackages
     -- determine relevant packages and indices
     let popsWithFracs = map (_popFracList . _admixSet) requestedInds
         pops = map (map pop) popsWithFracs
