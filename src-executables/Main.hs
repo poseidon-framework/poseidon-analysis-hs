@@ -19,7 +19,6 @@ import qualified Data.Text                        as T
 import           Data.Version                     (showVersion)
 import qualified Options.Applicative              as OP
 import           Paths_poseidon_analysis_hs       (version)
-import           Poseidon.CLI.List                (RepoLocationSpec (..))
 import           Poseidon.Generator.Parsers       (readIndWithAdmixtureSetString)
 import           Poseidon.Generator.Types         (IndWithAdmixtureSet)
 import           Poseidon.GenotypeData            (GenoDataSource (..),

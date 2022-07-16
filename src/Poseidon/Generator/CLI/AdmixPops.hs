@@ -24,7 +24,6 @@ import           SequenceFormats.Eigenstrat    (EigenstratIndEntry (..),
 import           SequenceFormats.Plink         (writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               ((</>))
-import           System.IO                     (hPrint, hPutStrLn, stderr)
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
@@ -103,18 +102,18 @@ checkIndsWithAdmixtureSets requestedInds = do
     mapM_ checkPopFracList requestedInds
     where
         checkDuplicateIndNames :: [IndWithAdmixtureSet] -> IO ()
-        checkDuplicateIndNames requestedInds =
-            let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map _admixInd requestedInds
+        checkDuplicateIndNames xs =
+            let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map _admixInd xs
             in unless (null individualsGrouped) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Duplicate individual names: " ++ intercalate "," (nub $ concat individualsGrouped)
         checkPopFracList :: IndWithAdmixtureSet -> IO ()
-        checkPopFracList cur = do
-            let xs = (_popFracList . _admixSet) cur
+        checkPopFracList x = do
+            let xs = (_popFracList . _admixSet) x
                 fracs = map frac xs
             when (sum fracs /= 100) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
-                    "Fractions in " ++ show cur ++ " do not to sum to 100%"
+                    "Fractions in " ++ show x ++ " do not to sum to 100%"
 
 filterPackagesByPops :: [String] -> [PoseidonPackage] -> IO [PoseidonPackage]
 filterPackagesByPops pops packages = do
