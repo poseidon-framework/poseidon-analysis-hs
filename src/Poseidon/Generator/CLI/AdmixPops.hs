@@ -23,7 +23,7 @@ import           SequenceFormats.Eigenstrat    (EigenstratIndEntry (..),
                                                 writeEigenstrat)
 import           SequenceFormats.Plink         (writePlink)
 import           System.Directory              (createDirectoryIfMissing)
-import           System.FilePath               ((</>))
+import           System.FilePath               ((</>), takeBaseName, (<.>))
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
@@ -32,6 +32,7 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixMarginalizeMissing      :: Bool
     , _admixOutFormat               :: GenotypeFormatSpec
     , _admixOutPath                 :: FilePath
+    , _forgeOutPacName              :: Maybe String
     }
 
 pacReadOpts :: PackageReadOptions
@@ -44,7 +45,7 @@ pacReadOpts = defaultPackageReadOptions {
     }
 
 runAdmixPops :: AdmixPopsOptions -> PoseidonLogIO ()
-runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outDir) = do
+runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outPath maybeOutName) = do
     -- compile individuals
     popsWithFracsFromFile <- case popsWithFracsFile of
         Nothing -> return []
@@ -52,7 +53,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     let requestedInds = popsWithFracsDirect ++ popsWithFracsFromFile
     -- validating input
     logInfo $ pack "Checking chimeras"
-    logInfo $ pack $ renderRequestedInds requestedInds
+    logInfo $ pack $ "Chimeras: " ++ renderRequestedInds requestedInds
     liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
     properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
@@ -64,21 +65,26 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
         pops = map (map pop) popsWithFracs
     relevantPackages <- liftIO $ filterPackagesByPops (concat pops) allPackages
     popsFracsInds <- liftIO $  mapM (mapM (`extractIndsPerPop` relevantPackages)) popsWithFracs
+    -- create new package --
+    let outName = case maybeOutName of -- take basename of outPath, if name is not provided
+            Just x  -> x
+            Nothing -> takeBaseName outPath
+    when (outName == "") $ liftIO $ throwIO PoseidonEmptyOutPacNameException
+    -- create new directory
+    logInfo $ pack $ "Writing to directory (will be created if missing): " ++ outPath
+    liftIO $ createDirectoryIfMissing True outPath
     -- compile genotype data structure
     let [outInd, outSnp, outGeno] = case outFormat of
-            GenotypeFormatEigenstrat -> ["admixpops_package.ind", "admixpops_package.snp", "admixpops_package.geno"]
-            GenotypeFormatPlink -> ["admixpops_package.fam", "admixpops_package.bim", "admixpops_package.bed"]
-    -- create output poseidon package
-    logInfo $ pack "Creating output Poseidon package"
-    liftIO $ createDirectoryIfMissing True outDir
+            GenotypeFormatEigenstrat -> [outName <.> ".ind", outName <.> ".snp", outName <.> ".geno"]
+            GenotypeFormatPlink -> [outName <.> ".fam", outName <.> ".bim", outName <.> ".bed"]
     let genotypeData = GenotypeDataSpec outFormat outGeno Nothing outSnp Nothing outInd Nothing Nothing
-        pac = newMinimalPackageTemplate outDir "admixpops_package" genotypeData
+        pac = newMinimalPackageTemplate outPath "admixpops_package" genotypeData
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
     logInfo $ pack "Compiling chimeras"
     liftIO $ runSafeT $ do
-        (_, eigenstratProd) <- getJointGenotypeData SimpleLog False relevantPackages Nothing
-        let [outG, outS, outI] = map (outDir </>) [outGeno, outSnp, outInd]
+        (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
+        let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
             newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
         let outConsumer = case outFormat of
                 GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries

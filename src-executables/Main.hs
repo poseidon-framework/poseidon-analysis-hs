@@ -218,6 +218,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseMarginalizeMissing
                                       <*> parseOutGenotypeFormat
                                       <*> parseOutPath
+                                      <*> parseMaybeOutPackageName
 
 parseGenoDataSources :: OP.Parser [GenoDataSource]
 parseGenoDataSources = OP.some parseGenoDataSource
@@ -333,4 +334,14 @@ parseOutPath = OP.strOption (
     OP.long "outPath" <>
     OP.short 'o' <>
     OP.help "The output directory path"
+    )
+
+parseMaybeOutPackageName :: OP.Parser (Maybe String)
+parseMaybeOutPackageName = OP.option (Just <$> OP.str) (
+    OP.short 'n' <>
+    OP.long "outPackageName" <>
+    OP.help "the output package name - this is optional: If no name is provided, \
+            \then the package name defaults to the basename of the (mandatory) \
+            \--outPackagePath argument" <> 
+    OP.value Nothing
     )
