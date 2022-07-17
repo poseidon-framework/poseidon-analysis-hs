@@ -342,6 +342,6 @@ parseMaybeOutPackageName = OP.option (Just <$> OP.str) (
     OP.long "outPackageName" <>
     OP.help "the output package name - this is optional: If no name is provided, \
             \then the package name defaults to the basename of the (mandatory) \
-            \--outPackagePath argument" <> 
+            \--outPackagePath argument" <>
     OP.value Nothing
     )

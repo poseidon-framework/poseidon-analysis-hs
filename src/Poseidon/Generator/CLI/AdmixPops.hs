@@ -23,7 +23,7 @@ import           SequenceFormats.Eigenstrat    (EigenstratIndEntry (..),
                                                 writeEigenstrat)
 import           SequenceFormats.Plink         (writePlink)
 import           System.Directory              (createDirectoryIfMissing)
-import           System.FilePath               ((</>), takeBaseName, (<.>))
+import           System.FilePath               (takeBaseName, (<.>), (</>))
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
