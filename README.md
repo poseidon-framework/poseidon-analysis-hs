@@ -1,4 +1,14 @@
-Welcome to the poseidon-analysis-hs package.
+[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/poseidon-framework/poseidon-analysis-hs/CI)](https://github.com/poseidon-framework/poseidon-analysis-hs/actions?query=workflow%3ACI)
+[![Coverage Status](https://img.shields.io/codecov/c/github/poseidon-framework/poseidon-analysis-hs/main.svg)](https://codecov.io/github/poseidon-framework/poseidon-analysis-hs?branch=main)
+[![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/poseidon-framework/poseidon-analysis-hs?include_prereleases) ![GitHub all releases](https://img.shields.io/github/downloads/poseidon-framework/poseidon-analysis-hs/total)](https://github.com/poseidon-framework/poseidon-analysis-hs/releases)
+[![Install with Bioconda](https://anaconda.org/bioconda/poseidon-trident/badges/installer/conda.svg)](https://anaconda.org/bioconda/poseidon-trident)
+
+# poseidon-analysis-hs
+Tools to analyse genotype data in the Poseidon package format. The main executable within this package is called `xerxes`.
+
+**Detailed user documentation can be found on our [website](https://poseidon-framework.github.io/#/xerxes).**
+
+***
 
 This is under development currently. 
 
