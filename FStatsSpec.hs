@@ -2,11 +2,12 @@
 {-# LANGUAGE QuasiQuotes       #-}
 module Poseidon.FStatsSpec (spec) where
 
-import           Poseidon.CLI.FStats (FStatSpec (..), PopSpec (..), fStatSpecParser,
-                                  runParser, readStatSpecsFromFile)
+import           Poseidon.CLI.FStats   (FStatSpec (..), PopSpec (..),
+                                        fStatSpecParser, readStatSpecsFromFile,
+                                        runParser)
 
-import qualified Data.ByteString.Char8     as B
-import           System.IO (withFile, IOMode(..))
+import qualified Data.ByteString.Char8 as B
+import           System.IO             (IOMode (..), withFile)
 import           Test.Hspec
 import           Text.RawString.QQ
 

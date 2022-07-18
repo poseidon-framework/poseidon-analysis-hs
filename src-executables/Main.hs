@@ -1,36 +1,48 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           Poseidon.Analysis.CLI.FStats   (FstatsOptions (..), runFstats,
-                                                 runParser)
-import           Poseidon.Analysis.CLI.RAS      (FreqSpec (..), RASOptions (..),
-                                                 runRAS)
-import           Poseidon.Analysis.FStatsConfig (FStatInput (..),
-                                                 fStatSpecParser)
-import           Poseidon.Analysis.Utils        (JackknifeMode (..))
+import           Poseidon.Analysis.CLI.FStats     (FstatsOptions (..),
+                                                   runFstats, runParser)
+import           Poseidon.Analysis.CLI.RAS        (FreqSpec (..),
+                                                   RASOptions (..), runRAS)
+import           Poseidon.Analysis.FStatsConfig   (FStatInput (..),
+                                                   fStatSpecParser)
+import           Poseidon.Analysis.Utils          (JackknifeMode (..))
+import           Poseidon.Generator.CLI.AdmixPops (AdmixPopsOptions (..),
+                                                   runAdmixPops)
 
-import           Colog                          (logError)
-import           Control.Applicative            ((<|>))
-import           Control.Exception              (catch)
-import           Data.ByteString.Char8          (pack, splitWith)
-import           Data.List                      (intercalate)
-import qualified Data.Text                      as T
-import           Data.Version                   (showVersion)
-import qualified Options.Applicative            as OP
-import           Paths_poseidon_analysis_hs     (version)
-import           Poseidon.PoseidonVersion       (showPoseidonVersion,
-                                                 validPoseidonVersions)
-import           Poseidon.Utils                 (LogMode (..),
-                                                 PoseidonException (..),
-                                                 PoseidonLogIO,
-                                                 renderPoseidonException,
-                                                 usePoseidonLogger)
-import           SequenceFormats.Utils          (Chrom (..))
-import           System.Exit                    (exitFailure)
-import           System.IO                      (hPutStrLn, stderr)
-import           Text.Read                      (readEither)
+import           Colog                            (logError)
+import           Control.Applicative              ((<|>))
+import           Control.Exception                (catch)
+import           Data.ByteString.Char8            (pack, splitWith)
+import           Data.List                        (intercalate)
+import qualified Data.Text                        as T
+import           Data.Version                     (showVersion)
+import qualified Options.Applicative              as OP
+import           Paths_poseidon_analysis_hs       (version)
+import           Poseidon.Generator.Parsers       (readIndWithAdmixtureSetString)
+import           Poseidon.Generator.Types         (IndWithAdmixtureSet)
+import           Poseidon.GenotypeData            (GenoDataSource (..),
+                                                   GenotypeDataSpec (..),
+                                                   GenotypeFormatSpec (..),
+                                                   SNPSetSpec (..))
+import           Poseidon.PoseidonVersion         (showPoseidonVersion,
+                                                   validPoseidonVersions)
+import           Poseidon.Utils                   (LogMode (..),
+                                                   PoseidonException (..),
+                                                   PoseidonLogIO,
+                                                   renderPoseidonException,
+                                                   usePoseidonLogger)
+import           SequenceFormats.Utils            (Chrom (..))
+import           System.Exit                      (exitFailure)
+import           System.FilePath                  (dropExtension, takeExtension,
+                                                   (<.>))
+import           System.IO                        (hPutStrLn, stderr)
+import           Text.Read                        (readEither)
 
-data Options = CmdFstats FstatsOptions
+data Options =
+      CmdFstats FstatsOptions
     | CmdRAS RASOptions
+    | CmdAdmixPops AdmixPopsOptions
 
 main :: IO ()
 main = do
@@ -47,8 +59,9 @@ main = do
 
 runCmd :: Options -> PoseidonLogIO ()
 runCmd o = case o of
-    CmdFstats opts -> runFstats opts
-    CmdRAS opts    -> runRAS opts
+    CmdFstats opts    -> runFstats opts
+    CmdRAS opts       -> runRAS opts
+    CmdAdmixPops opts -> runAdmixPops opts
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
@@ -71,12 +84,15 @@ renderVersion =
 optParser :: OP.Parser Options
 optParser = OP.subparser $
     OP.command "fstats" fstatsOptInfo <>
-    OP.command "ras" rasOptInfo
+    OP.command "ras" rasOptInfo <>
+    OP.command "admixpops" admixPopsOptInfo
   where
     fstatsOptInfo = OP.info (OP.helper <*> (CmdFstats <$> fstatsOptParser))
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
     rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
         (OP.progDesc "Compute RAS statistics on groups and individuals within and across Poseidon packages")
+    admixPopsOptInfo = OP.info (OP.helper <*> (CmdAdmixPops <$> admixPopsOptParser))
+        (OP.progDesc "Generate individuals with randomized genotype profiles based on admixture proportions")
 
 
 fstatsOptParser :: OP.Parser FstatsOptions
@@ -87,12 +103,6 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseMaxSnps
                                 <*> parseNoTransitions
                                 <*> parseTableOutFile
-
-parseBasePaths :: OP.Parser [FilePath]
-parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>
-    OP.short 'd' <>
-    OP.metavar "DIR" <>
-    OP.help "a base directory to search for Poseidon Packages (could be a Poseidon repository)"))
 
 parseJackknife :: OP.Parser JackknifeMode
 parseJackknife = OP.option (OP.eitherReader readJackknifeString) (OP.long "jackknife" <> OP.short 'j' <>
@@ -201,3 +211,138 @@ parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transit
 parseBedFile :: OP.Parser (Maybe FilePath)
 parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An optional bed file that gives sites to be \
     \included in the analysis." <> OP.value Nothing)
+
+admixPopsOptParser :: OP.Parser AdmixPopsOptions
+admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
+                                      <*> parseIndWithAdmixtureSetDirect
+                                      <*> parseIndWithAdmixtureSetFromFile
+                                      <*> parseMarginalizeMissing
+                                      <*> parseOutGenotypeFormat
+                                      <*> parseOutPath
+                                      <*> parseMaybeOutPackageName
+
+parseGenoDataSources :: OP.Parser [GenoDataSource]
+parseGenoDataSources = OP.some parseGenoDataSource
+
+parseGenoDataSource :: OP.Parser GenoDataSource
+parseGenoDataSource = (PacBaseDir <$> parseBasePath) <|> (GenoDirect <$> parseInGenotypeDataset)
+
+parseBasePaths :: OP.Parser [FilePath]
+parseBasePaths = OP.some parseBasePath
+
+parseBasePath :: OP.Parser FilePath
+parseBasePath = OP.strOption (OP.long "baseDir" <>
+    OP.short 'd' <>
+    OP.metavar "DIR" <>
+    OP.help "a base directory to search for Poseidon Packages (could be a Poseidon repository)")
+
+parseInGenotypeDataset :: OP.Parser GenotypeDataSpec
+parseInGenotypeDataset = createGeno <$> (parseInGenoOne <|> parseInGenoSep) <*> pure Nothing
+    where
+        createGeno :: GenoInput -> Maybe SNPSetSpec -> GenotypeDataSpec
+        createGeno (a,b,c,d) e = GenotypeDataSpec a b Nothing c Nothing d Nothing e
+
+type GenoInput = (GenotypeFormatSpec, FilePath, FilePath, FilePath)
+
+parseInGenoOne :: OP.Parser GenoInput
+parseInGenoOne = OP.option (OP.eitherReader readGenoInput) (
+        OP.short 'p' <> OP.long "genoOne" <> OP.help
+            "one of the input genotype data files. Expects\
+            \ .bed  or .bim or .fam for PLINK and\
+            \ .geno or .snp or .ind for EIGENSTRAT.\
+            \ The other files must be in the same directory and must have the same base name")
+    where
+        readGenoInput :: FilePath -> Either String GenoInput
+        readGenoInput p = makeGenoInput (dropExtension p) (takeExtension p)
+        makeGenoInput path ext
+            | ext `elem` [".geno", ".snp", ".ind"] =
+                Right (GenotypeFormatEigenstrat,(path <.> "geno"),(path <.> "snp"),(path <.> "ind"))
+            | ext `elem` [".bed", ".bim", ".fam"]  =
+                Right (GenotypeFormatPlink,     (path <.> "bed"), (path <.> "bim"),(path <.> "fam"))
+            | otherwise = Left $ "unknown file extension: " ++ ext
+
+parseInGenoSep :: OP.Parser GenoInput
+parseInGenoSep = (,,,) <$> parseInGenotypeFormat <*> parseInGenoFile <*> parseInSnpFile <*> parseInIndFile
+
+parseInGenotypeFormat :: OP.Parser GenotypeFormatSpec
+parseInGenotypeFormat = OP.option (OP.eitherReader readGenotypeFormat) (
+    OP.long "inFormat" <>
+    OP.help "the format of the input genotype data: EIGENSTRAT or PLINK\
+            \ (only necessary for data input with --genoFile + --snpFile + --indFile)")
+  where
+    readGenotypeFormat :: String -> Either String GenotypeFormatSpec
+    readGenotypeFormat s = case s of
+        "EIGENSTRAT" -> Right GenotypeFormatEigenstrat
+        "PLINK"      -> Right GenotypeFormatPlink
+        _            -> Left "must be EIGENSTRAT or PLINK"
+
+parseInGenoFile :: OP.Parser FilePath
+parseInGenoFile = OP.strOption (
+    OP.long "genoFile" <>
+    OP.help "the input geno file path")
+
+parseInSnpFile :: OP.Parser FilePath
+parseInSnpFile = OP.strOption (
+    OP.long "snpFile" <>
+    OP.help "the input snp file path")
+
+parseInIndFile :: OP.Parser FilePath
+parseInIndFile = OP.strOption (
+    OP.long "indFile" <>
+    OP.help "the input ind file path")
+
+parseIndWithAdmixtureSetDirect :: OP.Parser [IndWithAdmixtureSet]
+parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (
+    OP.long "admixString" <>
+    OP.short 'a' <>
+    OP.value [] <>
+    OP.help "Population setup of interest: Each setup is a string of the form \
+            \\"[id:group](population1=10+population2=30+...)\". Multiple setups can be listed separated by ;. \
+            \id and group are simple strings. \
+            \The population fractions must be simple integers and sum to 100."
+    )
+
+parseIndWithAdmixtureSetFromFile :: OP.Parser (Maybe FilePath)
+parseIndWithAdmixtureSetFromFile = OP.option (Just <$> OP.str) (OP.long "admixFile" <>
+    OP.value Nothing <>
+    OP.help "A file with a list of spatiotemporal positions. \
+            \Works just as -p, but multiple values can be given separated by newline. \
+            \-a and --admixFile can be combined."
+    )
+
+parseMarginalizeMissing :: OP.Parser Bool
+parseMarginalizeMissing = OP.switch (
+    OP.long "marginalizeMissing" <>
+    OP.help "ignore missing SNPs in the per-population genotype frequency calculation \
+            \(except all individuals have missing information for a given SNP)"
+    )
+
+parseOutGenotypeFormat :: OP.Parser GenotypeFormatSpec
+parseOutGenotypeFormat = OP.option (OP.eitherReader readGenotypeFormat) (
+    OP.long "outFormat" <>
+    OP.help "The format of the output genotype data: EIGENSTRAT or PLINK" <>
+    OP.value GenotypeFormatEigenstrat
+    )
+    where
+    readGenotypeFormat :: String -> Either String GenotypeFormatSpec
+    readGenotypeFormat s = case s of
+        "EIGENSTRAT" -> Right GenotypeFormatEigenstrat
+        "PLINK"      -> Right GenotypeFormatPlink
+        _            -> Left "must be EIGENSTRAT or PLINK"
+
+parseOutPath :: OP.Parser FilePath
+parseOutPath = OP.strOption (
+    OP.long "outPath" <>
+    OP.short 'o' <>
+    OP.help "The output directory path"
+    )
+
+parseMaybeOutPackageName :: OP.Parser (Maybe String)
+parseMaybeOutPackageName = OP.option (Just <$> OP.str) (
+    OP.short 'n' <>
+    OP.long "outPackageName" <>
+    OP.help "the output package name - this is optional: If no name is provided, \
+            \then the package name defaults to the basename of the (mandatory) \
+            \--outPackagePath argument" <>
+    OP.value Nothing
+    )
