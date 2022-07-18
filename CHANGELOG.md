@@ -1,3 +1,4 @@
+- 0.2.2.0: Added a no-transitions-option to fstats.
 - 0.2.1.0: Big code refactoring, first tests, and optimization boost with allele-frequency lookup-tables.
 - 0.2.0.4: Fixed bug with ascertainment: Polymorphic sites in the ascertainment-outgroup now get filtered out.
 - 0.2.0.3: Fixed nr of arguments bug with F3vanilla
