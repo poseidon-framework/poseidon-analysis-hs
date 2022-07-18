@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Poseidon.Analysis.CLI.FStats (
       FStatSpec(..)
@@ -17,7 +18,8 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  addGroupDefs,
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
-                                                 computeJackknifeOriginal)
+                                                 computeJackknifeOriginal,
+                                                 filterTransitions)
 
 
 import           Colog                          (logError, logInfo)
@@ -74,6 +76,7 @@ data FstatsOptions = FstatsOptions
     -- ^ A list of F-statistics to compute
     , _foStatInput     :: [FStatInput] -- ^ A list of F-statistics to compute, entered directly or via files
     , _foMaxSnps       :: Maybe Int
+    , _foNoTransitions :: Bool
     , _foTableOut      :: Maybe FilePath
     }
 
@@ -134,7 +137,10 @@ runFstats opts = do
         blocks <- liftIO . runSafeT $ do
             statsFold <- buildStatSpecsFold jointIndInfo statSpecs
             (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
-            let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
+            let eigenstratProdFiltered =
+                    eigenstratProd >->
+                    P.filter chromFilter >->
+                    capNrSnps (_foMaxSnps opts) >-> filterTransitions (_foNoTransitions opts)
                 eigenstratProdInChunks = case _foJackknifeMode opts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered

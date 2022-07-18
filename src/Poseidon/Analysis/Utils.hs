@@ -4,18 +4,21 @@ module Poseidon.Analysis.Utils where
 
 import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
-import Control.Monad (forM)
+import           Control.Monad              (forM)
 import           Data.Aeson                 ((.:))
 import           Data.Aeson.Types           (Object, Parser)
 import           Data.Char                  (isSpace)
 import           Data.HashMap.Strict        (toList)
 import           Data.Text                  (unpack)
 import qualified Data.Vector                as V
+import           Pipes                      (Pipe, cat)
+import qualified Pipes.Prelude              as P
 import           Poseidon.EntitiesList      (PoseidonEntity (..),
                                              SignedEntitiesList,
                                              indInfoConformsToEntitySpec)
 import           Poseidon.SecondaryTypes    (IndividualInfo (..))
-import           SequenceFormats.Eigenstrat (GenoEntry (..), GenoLine)
+import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
+                                             GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
 import qualified Text.Parsec                as P
 import qualified Text.Parsec.String         as P
@@ -108,9 +111,23 @@ computeJackknifeAdditive weights values =
         sigmaSquare = sum [mj * (val - theta) ^ (2 :: Int) / (sumWeights - mj) | (mj, val) <- zip weights' values] / g
     in  (theta, sqrt sigmaSquare)
 
+filterTransitions :: (Monad m) => Bool -> Pipe (EigenstratSnpEntry, a) (EigenstratSnpEntry, a) m r
+filterTransitions noTransitions = if noTransitions then
+        P.filter (\(EigenstratSnpEntry _ _ _ _ ref alt, _) -> isTransversion ref alt)
+    else
+        cat
+    where
+    isTransversion ref alt = not $ isTransition ref alt
+    isTransition ref alt =
+        ((ref == 'A') && (alt == 'G')) ||
+        ((ref == 'G') && (alt == 'A')) ||
+        ((ref == 'C') && (alt == 'T')) ||
+        ((ref == 'T') && (alt == 'C'))
+
 data XerxesException = PopConfigYamlException FilePath String
     | GroupDefException String
     | FStatException String
     deriving (Show)
 
 instance Exception XerxesException
+

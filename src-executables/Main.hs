@@ -85,6 +85,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseExcludeChroms
                                 <*> parseFstatInput
                                 <*> parseMaxSnps
+                                <*> parseNoTransitions
                                 <*> parseTableOutFile
 
 parseBasePaths :: OP.Parser [FilePath]
