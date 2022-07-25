@@ -96,6 +96,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseExcludeChroms
                                 <*> parseFstatInput
                                 <*> parseMaxSnps
+                                <*> parseNoTransitions
                                 <*> parseTableOutFile
 
 parseJackknife :: OP.Parser JackknifeMode

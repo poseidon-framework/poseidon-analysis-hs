@@ -8,7 +8,8 @@ import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
                                               addGroupDefs, computeAlleleCount,
                                               computeAlleleFreq,
                                               computeJackknifeAdditive,
-                                              computeJackknifeOriginal)
+                                              computeJackknifeOriginal,
+                                              filterTransitions)
 
 import           Control.Exception           (throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
@@ -226,17 +227,6 @@ runRAS rasOpts = do
     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
     showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
         show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block
-    filterTransitions noTransitions = if noTransitions then
-            P.filter (\(EigenstratSnpEntry _ _ _ _ ref alt, _) -> isTransversion ref alt)
-        else
-            cat
-      where
-        isTransversion ref alt = not $ isTransition ref alt
-        isTransition ref alt =
-            ((ref == 'A') && (alt == 'G')) ||
-            ((ref == 'G') && (alt == 'A')) ||
-            ((ref == 'C') && (alt == 'T')) ||
-            ((ref == 'T') && (alt == 'C'))
 
 weightedAverage :: [Double] -> [Double] -> Double
 weightedAverage vals weights =
