@@ -10,12 +10,10 @@ import           Poseidon.Analysis.Utils          (JackknifeMode (..))
 import           Poseidon.Generator.CLI.AdmixPops (AdmixPopsOptions (..),
                                                    runAdmixPops)
 
-import           Colog                            (logError)
 import           Control.Applicative              ((<|>))
 import           Control.Exception                (catch)
 import           Data.ByteString.Char8            (pack, splitWith)
 import           Data.List                        (intercalate)
-import qualified Data.Text                        as T
 import           Data.Version                     (showVersion)
 import qualified Options.Applicative              as OP
 import           Paths_poseidon_analysis_hs       (version)
@@ -29,7 +27,7 @@ import           Poseidon.PoseidonVersion         (showPoseidonVersion,
                                                    validPoseidonVersions)
 import           Poseidon.Utils                   (LogMode (..),
                                                    PoseidonException (..),
-                                                   PoseidonLogIO,
+                                                   PoseidonLogIO, logError,
                                                    renderPoseidonException,
                                                    usePoseidonLogger)
 import           SequenceFormats.Utils            (Chrom (..))
@@ -54,7 +52,7 @@ main = do
         p = OP.prefs OP.showHelpOnEmpty
         handler :: PoseidonException -> IO ()
         handler e = do
-            usePoseidonLogger DefaultLog . logError . T.pack $ renderPoseidonException e
+            usePoseidonLogger DefaultLog . logError $ renderPoseidonException e
             exitFailure
 
 runCmd :: Options -> PoseidonLogIO ()

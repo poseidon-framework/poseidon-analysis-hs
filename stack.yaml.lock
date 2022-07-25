@@ -6,15 +6,15 @@
 packages:
 - completed:
     name: poseidon-hs
-    version: 1.1.0.1
+    version: 1.1.1.2
     git: https://github.com/poseidon-framework/poseidon-hs
     pantry-tree:
-      size: 14625
-      sha256: bc308f4b3f9a2db03808ba0b7bec8186428144271a74481ea4af6d6cf15bd0dd
-    commit: 3f39101eef694c623454199696ae54b8503d2791
+      size: 14765
+      sha256: dcfc7ba9811d9678499ef562ed438e5e90ba2014ad4325eb1bce1636b3d634d5
+    commit: f64eea67364247eecc527fcf5390453b94d57859
   original:
     git: https://github.com/poseidon-framework/poseidon-hs
-    commit: 3f39101eef694c623454199696ae54b8503d2791
+    commit: f64eea67364247eecc527fcf5390453b94d57859
 - completed:
     hackage: table-layout-0.9.1.0@sha256:172b8b3a06c992839a781b77e42bbce689ba87d92c260acb61d187f7e6aad7f2,7154
     pantry-tree:

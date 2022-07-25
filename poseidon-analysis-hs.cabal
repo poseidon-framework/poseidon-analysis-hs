@@ -22,7 +22,7 @@ library
     build-depends:      base, poseidon-hs, sequence-formats, foldl,
                         exceptions, vector, lens-family, pipes, pipes-group, pipes-safe,
                         table-layout, parsec, aeson, bytestring, text, yaml, unordered-containers, containers,
-                        co-log, MonadRandom, ansi-terminal, directory, parsec, parsec3-numbers, filepath
+                        co-log, MonadRandom, ansi-terminal, directory, parsec, parsec3-numbers, filepath, mtl
     default-language:   Haskell2010
 
 executable xerxes

@@ -5,13 +5,12 @@ import           Poseidon.Generator.SampleGeno
 import           Poseidon.Generator.Types
 import           Poseidon.Generator.Utils
 
-import           Colog.Message                 (logInfo)
 import           Control.Exception             (throwIO)
 import           Control.Monad                 (forM, unless, when)
+import           Control.Monad.Reader          (ask)
 import           Data.List
 import           Data.Maybe
 import           Data.Ratio                    ((%))
-import           Data.Text                     (pack)
 import           Pipes
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (runSafeT)
@@ -52,13 +51,13 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
         Just f  -> liftIO $ readIndWithAdmixtureSetFromFile f
     let requestedInds = popsWithFracsDirect ++ popsWithFracsFromFile
     -- validating input
-    logInfo $ pack "Checking chimeras"
-    logInfo $ pack $ "Chimeras: " ++ renderRequestedInds requestedInds
+    logInfo "Checking chimeras"
+    logInfo $ "Chimeras: " ++ renderRequestedInds requestedInds
     liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
     properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
     pseudoPackages <- liftIO $ mapM makePseudoPackageFromGenotypeData $ [getGenoDirect x | x@GenoDirect {} <- genoSources]
-    logInfo $ pack $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
+    logInfo $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
     let allPackages = properPackages ++ pseudoPackages
     -- determine relevant packages and indices
     let popsWithFracs = map (_popFracList . _admixSet) requestedInds
@@ -71,7 +70,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
             Nothing -> takeBaseName outPath
     when (outName == "") $ liftIO $ throwIO PoseidonEmptyOutPacNameException
     -- create new directory
-    logInfo $ pack $ "Writing to directory (will be created if missing): " ++ outPath
+    logInfo $ "Writing to directory (will be created if missing): " ++ outPath
     liftIO $ createDirectoryIfMissing True outPath
     -- compile genotype data structure
     let [outInd, outSnp, outGeno] = case outFormat of
@@ -81,9 +80,10 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
         pac = newMinimalPackageTemplate outPath "admixpops_package" genotypeData
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
-    logInfo $ pack "Compiling chimeras"
+    logInfo "Compiling chimeras"
+    logEnv <- ask
     liftIO $ runSafeT $ do
-        (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
+        (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
         let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
             newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
         let outConsumer = case outFormat of
@@ -93,7 +93,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
             printSNPCopyProgress >->
             P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
             outConsumer
-    logInfo $ pack "Done"
+    logInfo "Done"
 
 renderRequestedInds :: [IndWithAdmixtureSet] -> String
 renderRequestedInds requestedInds =

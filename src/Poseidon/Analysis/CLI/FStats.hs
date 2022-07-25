@@ -20,17 +20,15 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal)
 
-
-import           Colog                          (logError, logInfo)
 import           Control.Foldl                  (FoldM (..), impurely, list,
                                                  purely)
 import           Control.Monad                  (forM, forM_, unless)
 import           Control.Monad.IO.Class         (MonadIO, liftIO)
+import           Control.Monad.Reader           (ask)
 import           Data.IORef                     (IORef, modifyIORef', newIORef,
                                                  readIORef, writeIORef)
 import           Data.List                      (intercalate, nub, (\\))
 import qualified Data.Map                       as M
-import           Data.Text                      (pack)
 import qualified Data.Vector                    as V
 import qualified Data.Vector.Unboxed            as VU
 import qualified Data.Vector.Unboxed.Mutable    as VUM
@@ -52,7 +50,8 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  getJointIndividualInfo,
                                                  readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
-import           Poseidon.Utils                 (LogMode (..), PoseidonLogIO)
+import           Poseidon.Utils                 (PoseidonLogIO, logError,
+                                                 logInfo)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -103,7 +102,7 @@ runFstats opts = do
     -- load packages --
     allPackages <- readPoseidonPackageCollection pacReadOpts (_foBaseDirs opts)
     (groupDefs, statSpecs) <- readFstatInput (_foStatInput opts)
-    unless (null groupDefs) . logInfo . pack $ "Found group definitions: " ++ show groupDefs
+    unless (null groupDefs) . logInfo $ "Found group definitions: " ++ show groupDefs
 
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
@@ -114,7 +113,7 @@ runFstats opts = do
     let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
 
     if not. null $ missingEntities then do
-        logError . pack $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
+        logError $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
         liftIO exitFailure
     else do
 
@@ -124,17 +123,18 @@ runFstats opts = do
         -- select only the packages needed for the statistics to be computed
         let relevantPackageNames = indInfoFindRelevantPackageNames collectedStats jointIndInfoWithNewGroups
         let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
-        logInfo . pack $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-        mapM_ (logInfo . pack . posPacTitle) relevantPackages
+        logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+        mapM_ (logInfo . posPacTitle) relevantPackages
 
         -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
         logInfo "Computing stats:"
-        mapM_ (logInfo . pack . summaryPrintFstats) statSpecs
+        mapM_ (logInfo . summaryPrintFstats) statSpecs
+        logEnv <- ask
         blocks <- liftIO . runSafeT $ do
             statsFold <- buildStatSpecsFold jointIndInfo statSpecs
-            (_, eigenstratProd) <- getJointGenotypeData DefaultLog False relevantPackages Nothing
+            (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
             let eigenstratProdFiltered = eigenstratProd >-> P.filter chromFilter >-> capNrSnps (_foMaxSnps opts)
                 eigenstratProdInChunks = case _foJackknifeMode opts of
                     JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
