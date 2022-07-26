@@ -21,6 +21,7 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeJackknifeOriginal,
                                                  filterTransitions)
 
+import           Control.Exception              (catch, throwIO)
 import           Control.Foldl                  (FoldM (..), impurely, list,
                                                  purely)
 import           Control.Monad                  (forM, forM_, unless)
@@ -52,7 +53,7 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
 import           Poseidon.Utils                 (PoseidonLogIO, logError,
-                                                 logInfo)
+                                                 logInfo, PoseidonException (..))
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -134,19 +135,21 @@ runFstats opts = do
         logInfo "Computing stats:"
         mapM_ (logInfo . summaryPrintFstats) statSpecs
         logEnv <- ask
-        blocks <- liftIO . runSafeT $ do
-            statsFold <- buildStatSpecsFold jointIndInfo statSpecs
-            (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
-            let eigenstratProdFiltered =
-                    eigenstratProd >->
-                    P.filter chromFilter >->
-                    capNrSnps (_foMaxSnps opts) >-> filterTransitions (_foNoTransitions opts)
-                eigenstratProdInChunks = case _foJackknifeMode opts of
-                    JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                    JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-            blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-            return blocks
+        blocks <- liftIO $ catch (
+            runSafeT $ do
+                statsFold <- buildStatSpecsFold jointIndInfo statSpecs
+                (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
+                let eigenstratProdFiltered =
+                        eigenstratProd >->
+                        P.filter chromFilter >->
+                        capNrSnps (_foMaxSnps opts) >-> filterTransitions (_foNoTransitions opts)
+                    eigenstratProdInChunks = case _foJackknifeMode opts of
+                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+                let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
+                blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+                return blocks
+            ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
         let jackknifeEstimates = processBlocks statSpecs blocks
         let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
         let colSpecs = replicate 11 (column expand def def def)

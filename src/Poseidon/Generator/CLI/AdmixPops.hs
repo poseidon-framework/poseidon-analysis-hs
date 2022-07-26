@@ -5,7 +5,7 @@ import           Poseidon.Generator.SampleGeno
 import           Poseidon.Generator.Types
 import           Poseidon.Generator.Utils
 
-import           Control.Exception             (throwIO)
+import           Control.Exception             (catch, throwIO)
 import           Control.Monad                 (forM, unless, when)
 import           Control.Monad.Reader          (ask)
 import           Data.List
@@ -82,17 +82,19 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     -- compile genotype data
     logInfo "Compiling chimeras"
     logEnv <- ask
-    liftIO $ runSafeT $ do
-        (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
-        let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
-            newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
-        let outConsumer = case outFormat of
-                GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
-                GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
-        runEffect $ eigenstratProd >->
-            printSNPCopyProgress >->
-            P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
-            outConsumer
+    liftIO $ catch (
+        runSafeT $ do
+            (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
+            let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
+                newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
+            let outConsumer = case outFormat of
+                    GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
+                    GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
+            runEffect $ eigenstratProd >->
+                printSNPCopyProgress >->
+                P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
+                outConsumer
+        ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
     logInfo "Done"
 
 renderRequestedInds :: [IndWithAdmixtureSet] -> String

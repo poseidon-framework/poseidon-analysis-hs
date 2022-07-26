@@ -11,7 +11,7 @@ import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
                                               computeJackknifeOriginal,
                                               filterTransitions)
 
-import           Control.Exception           (throwIO)
+import           Control.Exception           (catch, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
 import           Control.Monad               (forM_, unless, when)
@@ -42,7 +42,7 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointIndividualInfo,
                                               readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes     (IndividualInfo (..))
-import           Poseidon.Utils              (PoseidonLogIO, logError, logInfo)
+import           Poseidon.Utils              (PoseidonLogIO, logError, logInfo, PoseidonException (..))
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
@@ -137,19 +137,21 @@ runRAS rasOpts = do
 
         -- run the fold and retrieve the block data needed for RAS computations and output
         logEnv <- ask
-        blockData <- liftIO . runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
-            let eigenstratProdFiltered =
-                    bedFilterFunc (eigenstratProd >->
-                                   P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->
-                                   capNrSnps (_rasMaxSnps rasOpts) >->
-                                   filterTransitions (_rasNoTransitions rasOpts))
-                eigenstratProdInChunks = case _rasJackknifeMode rasOpts of
-                    JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                    JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-            let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
-            liftIO $ hPutStrLn stderr "performing counts"
-            purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+        blockData <- liftIO $ catch (
+            runSafeT $ do
+                (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
+                let eigenstratProdFiltered =
+                        bedFilterFunc (eigenstratProd >->
+                                       P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->
+                                       capNrSnps (_rasMaxSnps rasOpts) >->
+                                       filterTransitions (_rasNoTransitions rasOpts))
+                    eigenstratProdInChunks = case _rasJackknifeMode rasOpts of
+                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+                let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
+                liftIO $ hPutStrLn stderr "performing counts"
+                purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+            ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
 
         -- outputting and computing results
         logInfo "collating results"

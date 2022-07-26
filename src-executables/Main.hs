@@ -213,7 +213,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseIndWithAdmixtureSetFromFile
                                       <*> parseMarginalizeMissing
                                       <*> parseOutGenotypeFormat True
-                                      <*> parseOutPath
+                                      <*> parseOutPackagePath
                                       <*> parseMaybeOutPackageName
 
 parseIndWithAdmixtureSetDirect :: OP.Parser [IndWithAdmixtureSet]
@@ -240,11 +240,4 @@ parseMarginalizeMissing = OP.switch (
     OP.long "marginalizeMissing" <>
     OP.help "ignore missing SNPs in the per-population genotype frequency calculation \
             \(except all individuals have missing information for a given SNP)"
-    )
-
-parseOutPath :: OP.Parser FilePath
-parseOutPath = OP.strOption (
-    OP.long "outPath" <>
-    OP.short 'o' <>
-    OP.help "The output directory path"
     )
