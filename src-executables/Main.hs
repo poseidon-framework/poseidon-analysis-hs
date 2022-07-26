@@ -34,7 +34,13 @@ import           System.Exit                             (exitFailure)
 import           System.IO                               (hPutStrLn, stderr)
 import           Text.Read                               (readEither)
 
-data Options =
+data Options = Options {
+    _logMode    :: LogMode
+  , _errLength  :: ErrorLength
+  , _subcommand :: Subcommand
+  }
+
+data Subcommand =
       CmdFstats FstatsOptions
     | CmdRAS RASOptions
     | CmdAdmixPops AdmixPopsOptions
@@ -43,23 +49,27 @@ main :: IO ()
 main = do
     hPutStrLn stderr renderVersion
     hPutStrLn stderr ""
-    cmdOpts <- OP.customExecParser p optParserInfo
-    catch (usePoseidonLogger DefaultLog $ runCmd cmdOpts) handler
+    (Options logMode errLength subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
+    catch (usePoseidonLogger logMode $ runCmd subcommand) (handler logMode errLength)
     where
-        p = OP.prefs OP.showHelpOnEmpty
-        handler :: PoseidonException -> IO ()
-        handler e = do
-            usePoseidonLogger DefaultLog . logError $ renderPoseidonException e
+        handler :: LogMode -> ErrorLength -> PoseidonException -> IO ()
+        handler l len e = do
+            usePoseidonLogger l $ logError $ truncateErr len $ renderPoseidonException e
             exitFailure
+        truncateErr :: ErrorLength -> String -> String
+        truncateErr CharInf         s = s
+        truncateErr (CharCount len) s
+            | length s > len          = take len s ++ "... (see more with --errLength)"
+            | otherwise               = s
 
-runCmd :: Options -> PoseidonLogIO ()
+runCmd :: Subcommand -> PoseidonLogIO ()
 runCmd o = case o of
     CmdFstats opts    -> runFstats opts
     CmdRAS opts       -> runRAS opts
     CmdAdmixPops opts -> runAdmixPops opts
 
 optParserInfo :: OP.ParserInfo Options
-optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
+optParserInfo = OP.info (OP.helper <*> versionOption <*> (Options <$> parseLogMode <*> parseErrorLength <*> subcommandParser)) (
     OP.briefDesc <>
     OP.progDesc "xerxes is an analysis tool for Poseidon packages. \
                 \Report issues here: \
@@ -73,11 +83,10 @@ renderVersion :: String
 renderVersion =
     "xerxes v" ++ showVersion version ++ " for poseidon v" ++
     intercalate ", v" (map showPoseidonVersion validPoseidonVersions) ++ "\n" ++
-    "https://poseidon-framework.github.io" -- ++ "\n" ++
-    --")<(({°> ~ ────E ~ <°}))>("
+    "https://poseidon-framework.github.io"
 
-optParser :: OP.Parser Options
-optParser = OP.subparser $
+subcommandParser :: OP.Parser Subcommand
+subcommandParser = OP.subparser $
     OP.command "fstats" fstatsOptInfo <>
     OP.command "ras" rasOptInfo <>
     OP.command "admixpops" admixPopsOptInfo
@@ -221,7 +230,7 @@ parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixture
     OP.long "admixString" <>
     OP.short 'a' <>
     OP.value [] <>
-    OP.help "Population setup of interest: Each setup is a string of the form \
+    OP.help "Artificial individual to generate: Each setup is a string of the form \
             \\"[id:group](population1=10+population2=30+...)\". Multiple setups can be listed separated by ;. \
             \id and group are simple strings. \
             \The population fractions must be simple integers and sum to 100."
@@ -230,8 +239,8 @@ parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixture
 parseIndWithAdmixtureSetFromFile :: OP.Parser (Maybe FilePath)
 parseIndWithAdmixtureSetFromFile = OP.option (Just <$> OP.str) (OP.long "admixFile" <>
     OP.value Nothing <>
-    OP.help "A file with a list of spatiotemporal positions. \
-            \Works just as -p, but multiple values can be given separated by newline. \
+    OP.help "A file with a list of admixStrings. \
+            \Works just as -a, but multiple values can be given separated by newline. \
             \-a and --admixFile can be combined."
     )
 
