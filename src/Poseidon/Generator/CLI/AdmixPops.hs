@@ -51,8 +51,8 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
         Just f  -> liftIO $ readIndWithAdmixtureSetFromFile f
     let requestedInds = popsWithFracsDirect ++ popsWithFracsFromFile
     -- validating input
-    logInfo "Checking chimeras"
-    logInfo $ "Chimeras: " ++ renderRequestedInds requestedInds
+    logInfo "Checking requested, artificial individuals"
+    logInfo $ "Individuals: " ++ renderRequestedInds requestedInds
     liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
     properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
@@ -80,7 +80,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
         pac = newMinimalPackageTemplate outPath "admixpops_package" genotypeData
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
-    logInfo "Compiling chimeras"
+    logInfo "Compiling individuals"
     logEnv <- ask
     liftIO $ catch (
         runSafeT $ do

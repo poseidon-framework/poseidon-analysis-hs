@@ -1,10 +1,10 @@
 name:                poseidon-analysis-hs
-version:             0.2.2.0
+version:             0.3.0.0
 synopsis:            A package with analysis-tools to work with Poseidon Genotype Data
 description:         The tools in this package analyse Poseidon-formatted genotype databases, a modular system for storing genotype data from thousands of individuals.
 license:             MIT
 license-file:        LICENSE
-author:              Stephan Schiffels
+author:              Stephan Schiffels, Clemens Schmid
 maintainer:          stephan_schiffels@eva.mpg.de
 category:            Bioinformatics
 build-type:          Simple

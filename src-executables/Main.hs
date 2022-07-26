@@ -86,10 +86,16 @@ renderVersion =
     "https://poseidon-framework.github.io"
 
 subcommandParser :: OP.Parser Subcommand
-subcommandParser = OP.subparser $
-    OP.command "fstats" fstatsOptInfo <>
-    OP.command "ras" rasOptInfo <>
-    OP.command "admixpops" admixPopsOptInfo
+subcommandParser =
+    OP.subparser (
+        OP.command "fstats" fstatsOptInfo <>
+        OP.command "ras" rasOptInfo <>
+        OP.commandGroup "Analysis commands:"
+    ) <|>
+    OP.subparser (
+        OP.command "admixpops" admixPopsOptInfo <>
+        OP.commandGroup "Artificial genotype generators:"
+    )
   where
     fstatsOptInfo = OP.info (OP.helper <*> (CmdFstats <$> fstatsOptParser))
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
@@ -230,7 +236,7 @@ parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixture
     OP.long "admixString" <>
     OP.short 'a' <>
     OP.value [] <>
-    OP.help "Artificial individual to generate: Each setup is a string of the form \
+    OP.help "Artificial individual to generate. Each setup is a string of the form \
             \\"[id:group](population1=10+population2=30+...)\". Multiple setups can be listed separated by ;. \
             \id and group are simple strings. \
             \The population fractions must be simple integers and sum to 100."
@@ -239,7 +245,7 @@ parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixture
 parseIndWithAdmixtureSetFromFile :: OP.Parser (Maybe FilePath)
 parseIndWithAdmixtureSetFromFile = OP.option (Just <$> OP.str) (OP.long "admixFile" <>
     OP.value Nothing <>
-    OP.help "A file with a list of admixStrings. \
+    OP.help "A file with admixStrings. \
             \Works just as -a, but multiple values can be given separated by newline. \
             \-a and --admixFile can be combined."
     )
