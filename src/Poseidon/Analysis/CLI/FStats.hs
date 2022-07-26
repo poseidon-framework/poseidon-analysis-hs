@@ -52,8 +52,9 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  getJointIndividualInfo,
                                                  readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
-import           Poseidon.Utils                 (PoseidonLogIO, logError,
-                                                 logInfo, PoseidonException (..))
+import           Poseidon.Utils                 (PoseidonException (..),
+                                                 PoseidonLogIO, logError,
+                                                 logInfo)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)

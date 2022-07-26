@@ -42,7 +42,8 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointIndividualInfo,
                                               readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes     (IndividualInfo (..))
-import           Poseidon.Utils              (PoseidonLogIO, logError, logInfo, PoseidonException (..))
+import           Poseidon.Utils              (PoseidonException (..),
+                                              PoseidonLogIO, logError, logInfo)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
