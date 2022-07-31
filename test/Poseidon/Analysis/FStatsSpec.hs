@@ -1,10 +1,11 @@
 module Poseidon.Analysis.FStatsSpec (spec) where
 
-import Poseidon.EntitiesList (PoseidonEntity(..))
-import Poseidon.Analysis.CLI.FStats (collectStatSpecGroups)
-import Poseidon.Analysis.FStatsConfig (FStatSpec(..), FStatType(..), AscertainmentSpec(..))
+import           Poseidon.Analysis.CLI.FStats   (collectStatSpecGroups)
+import           Poseidon.Analysis.FStatsConfig (AscertainmentSpec (..),
+                                                 FStatSpec (..), FStatType (..))
+import           Poseidon.EntitiesList          (PoseidonEntity (..))
 
-import Test.Hspec
+import           Test.Hspec
 
 spec :: Spec
 spec = do

@@ -1,3 +1,12 @@
+- 0.3.0.0: A number of changes when integrating paagen into xerxes: 
+	- Switched to GHC v8.10.7
+	- Ran stylish-haskell and enabled a GitHub action that checks if new code follows its default guidelines
+	- Added and endabled the subcommand admixpops (formerly part of the independent tool paagen)
+	- Added the infrastructure for direct genotype data handling for admixpops (not yet for fstats and ras, though)
+	- Added a normal code check GitHub Action to make sure the master branch compiles and the tests run through
+	- Updated the colog logging to the new setup in poseidon-hs v1.1.1.0
+	- Replaced some parsing code with a dependency to Poseidon.CLI.OptparseApplicativeParsers added in poseidon-hs v1.1.1.2
+	- Integrated some of the error handling innovations (e.g. --logMode/--errLength) from trident in xerxes
 - 0.2.2.0: Added a no-transitions-option to fstats.
 - 0.2.1.0: Big code refactoring, first tests, and optimization boost with allele-frequency lookup-tables.
 - 0.2.0.4: Fixed bug with ascertainment: Polymorphic sites in the ascertainment-outgroup now get filtered out.

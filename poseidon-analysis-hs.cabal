@@ -1,10 +1,10 @@
 name:                poseidon-analysis-hs
-version:             0.2.2.0
+version:             0.3.0.0
 synopsis:            A package with analysis-tools to work with Poseidon Genotype Data
 description:         The tools in this package analyse Poseidon-formatted genotype databases, a modular system for storing genotype data from thousands of individuals.
 license:             MIT
 license-file:        LICENSE
-author:              Stephan Schiffels
+author:              Stephan Schiffels, Clemens Schmid
 maintainer:          stephan_schiffels@eva.mpg.de
 category:            Bioinformatics
 build-type:          Simple
@@ -14,19 +14,22 @@ extra-source-files:  README.md,
 
 library
     exposed-modules:    Poseidon.Analysis.FStatsConfig, Poseidon.Analysis.RASconfig, Poseidon.Analysis.Utils,
-                        Poseidon.Analysis.CLI.FStats, Poseidon.Analysis.CLI.RAS
+                        Poseidon.Analysis.CLI.FStats, Poseidon.Analysis.CLI.RAS,
+                        Poseidon.Generator.CLI.AdmixPops, Poseidon.Generator.CLI.SpaceTime,
+                        Poseidon.Generator.Parsers, Poseidon.Generator.Types,
+                        Poseidon.Generator.SampleGeno, Poseidon.Generator.Utils
     hs-source-dirs:     src
     build-depends:      base, poseidon-hs, sequence-formats, foldl,
                         exceptions, vector, lens-family, pipes, pipes-group, pipes-safe,
                         table-layout, parsec, aeson, bytestring, text, yaml, unordered-containers, containers,
-                        co-log
+                        co-log, MonadRandom, ansi-terminal, directory, parsec, parsec3-numbers, filepath, mtl
     default-language:   Haskell2010
 
 executable xerxes
     main-is:            Main.hs
     hs-source-dirs:     src-executables
     build-depends:      base, poseidon-hs, poseidon-analysis-hs, optparse-applicative, sequence-formats,
-                        bytestring, co-log, text
+                        bytestring, co-log, text, filepath, MonadRandom
     other-modules:      Paths_poseidon_analysis_hs
     default-language:   Haskell2010
 

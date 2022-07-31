@@ -1,57 +1,75 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import           Poseidon.Analysis.CLI.FStats   (FstatsOptions (..), runFstats,
-                                                 runParser)
-import           Poseidon.Analysis.CLI.RAS      (FreqSpec (..), RASOptions (..),
-                                                 runRAS)
-import           Poseidon.Analysis.FStatsConfig (FStatInput (..),
-                                                 fStatSpecParser)
-import           Poseidon.Analysis.Utils        (JackknifeMode (..))
+import           Poseidon.Analysis.CLI.FStats            (FstatsOptions (..),
+                                                          runFstats, runParser)
+import           Poseidon.Analysis.CLI.RAS               (FreqSpec (..),
+                                                          RASOptions (..),
+                                                          runRAS)
+import           Poseidon.Analysis.FStatsConfig          (FStatInput (..),
+                                                          fStatSpecParser)
+import           Poseidon.Analysis.Utils                 (JackknifeMode (..))
+import           Poseidon.Generator.CLI.AdmixPops        (AdmixPopsOptions (..),
+                                                          runAdmixPops)
+import           Poseidon.Generator.Parsers              (readIndWithAdmixtureSetString)
+import           Poseidon.Generator.Types                (IndWithAdmixtureSet)
 
-import           Colog                          (logError)
-import           Control.Applicative            ((<|>))
-import           Control.Exception              (catch)
-import           Data.ByteString.Char8          (pack, splitWith)
-import           Data.List                      (intercalate)
-import qualified Data.Text                      as T
-import           Data.Version                   (showVersion)
-import qualified Options.Applicative            as OP
-import           Paths_poseidon_analysis_hs     (version)
-import           Poseidon.PoseidonVersion       (showPoseidonVersion,
-                                                 validPoseidonVersions)
-import           Poseidon.Utils                 (LogMode (..),
-                                                 PoseidonException (..),
-                                                 PoseidonLogIO,
-                                                 renderPoseidonException,
-                                                 usePoseidonLogger)
-import           SequenceFormats.Utils          (Chrom (..))
-import           System.Exit                    (exitFailure)
-import           System.IO                      (hPutStrLn, stderr)
-import           Text.Read                      (readEither)
+import           Control.Applicative                     ((<|>))
+import           Control.Exception                       (catch)
+import           Data.ByteString.Char8                   (pack, splitWith)
+import           Data.List                               (intercalate)
+import           Data.Version                            (showVersion)
+import qualified Options.Applicative                     as OP
+import           Paths_poseidon_analysis_hs              (version)
+import           Poseidon.CLI.OptparseApplicativeParsers
+import           Poseidon.PoseidonVersion                (showPoseidonVersion,
+                                                          validPoseidonVersions)
+import           Poseidon.Utils                          (LogMode (..),
+                                                          PoseidonException (..),
+                                                          PoseidonLogIO,
+                                                          logError,
+                                                          renderPoseidonException,
+                                                          usePoseidonLogger)
+import           SequenceFormats.Utils                   (Chrom (..))
+import           System.Exit                             (exitFailure)
+import           System.IO                               (hPutStrLn, stderr)
+import           Text.Read                               (readEither)
 
-data Options = CmdFstats FstatsOptions
+data Options = Options {
+    _logMode    :: LogMode
+  , _errLength  :: ErrorLength
+  , _subcommand :: Subcommand
+  }
+
+data Subcommand =
+      CmdFstats FstatsOptions
     | CmdRAS RASOptions
+    | CmdAdmixPops AdmixPopsOptions
 
 main :: IO ()
 main = do
     hPutStrLn stderr renderVersion
     hPutStrLn stderr ""
-    cmdOpts <- OP.customExecParser p optParserInfo
-    catch (usePoseidonLogger DefaultLog $ runCmd cmdOpts) handler
+    (Options logMode errLength subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
+    catch (usePoseidonLogger logMode $ runCmd subcommand) (handler logMode errLength)
     where
-        p = OP.prefs OP.showHelpOnEmpty
-        handler :: PoseidonException -> IO ()
-        handler e = do
-            usePoseidonLogger DefaultLog . logError . T.pack $ renderPoseidonException e
+        handler :: LogMode -> ErrorLength -> PoseidonException -> IO ()
+        handler l len e = do
+            usePoseidonLogger l $ logError $ truncateErr len $ renderPoseidonException e
             exitFailure
+        truncateErr :: ErrorLength -> String -> String
+        truncateErr CharInf         s = s
+        truncateErr (CharCount len) s
+            | length s > len          = take len s ++ "... (see more with --errLength)"
+            | otherwise               = s
 
-runCmd :: Options -> PoseidonLogIO ()
+runCmd :: Subcommand -> PoseidonLogIO ()
 runCmd o = case o of
-    CmdFstats opts -> runFstats opts
-    CmdRAS opts    -> runRAS opts
+    CmdFstats opts    -> runFstats opts
+    CmdRAS opts       -> runRAS opts
+    CmdAdmixPops opts -> runAdmixPops opts
 
 optParserInfo :: OP.ParserInfo Options
-optParserInfo = OP.info (OP.helper <*> versionOption <*> optParser) (
+optParserInfo = OP.info (OP.helper <*> versionOption <*> (Options <$> parseLogMode <*> parseErrorLength <*> subcommandParser)) (
     OP.briefDesc <>
     OP.progDesc "xerxes is an analysis tool for Poseidon packages. \
                 \Report issues here: \
@@ -65,18 +83,26 @@ renderVersion :: String
 renderVersion =
     "xerxes v" ++ showVersion version ++ " for poseidon v" ++
     intercalate ", v" (map showPoseidonVersion validPoseidonVersions) ++ "\n" ++
-    "https://poseidon-framework.github.io" -- ++ "\n" ++
-    --")<(({°> ~ ────E ~ <°}))>("
+    "https://poseidon-framework.github.io"
 
-optParser :: OP.Parser Options
-optParser = OP.subparser $
-    OP.command "fstats" fstatsOptInfo <>
-    OP.command "ras" rasOptInfo
+subcommandParser :: OP.Parser Subcommand
+subcommandParser =
+    OP.subparser (
+        OP.command "fstats" fstatsOptInfo <>
+        OP.command "ras" rasOptInfo <>
+        OP.commandGroup "Analysis commands:"
+    ) <|>
+    OP.subparser (
+        OP.command "admixpops" admixPopsOptInfo <>
+        OP.commandGroup "Artificial genotype generators:"
+    )
   where
     fstatsOptInfo = OP.info (OP.helper <*> (CmdFstats <$> fstatsOptParser))
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
     rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
         (OP.progDesc "Compute RAS statistics on groups and individuals within and across Poseidon packages")
+    admixPopsOptInfo = OP.info (OP.helper <*> (CmdAdmixPops <$> admixPopsOptParser))
+        (OP.progDesc "Generate individuals with randomized genotype profiles based on admixture proportions")
 
 
 fstatsOptParser :: OP.Parser FstatsOptions
@@ -87,12 +113,6 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseMaxSnps
                                 <*> parseNoTransitions
                                 <*> parseTableOutFile
-
-parseBasePaths :: OP.Parser [FilePath]
-parseBasePaths = OP.some (OP.strOption (OP.long "baseDir" <>
-    OP.short 'd' <>
-    OP.metavar "DIR" <>
-    OP.help "a base directory to search for Poseidon Packages (could be a Poseidon repository)"))
 
 parseJackknife :: OP.Parser JackknifeMode
 parseJackknife = OP.option (OP.eitherReader readJackknifeString) (OP.long "jackknife" <> OP.short 'j' <>
@@ -201,3 +221,38 @@ parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transit
 parseBedFile :: OP.Parser (Maybe FilePath)
 parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An optional bed file that gives sites to be \
     \included in the analysis." <> OP.value Nothing)
+
+admixPopsOptParser :: OP.Parser AdmixPopsOptions
+admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
+                                      <*> parseIndWithAdmixtureSetDirect
+                                      <*> parseIndWithAdmixtureSetFromFile
+                                      <*> parseMarginalizeMissing
+                                      <*> parseOutGenotypeFormat True
+                                      <*> parseOutPackagePath
+                                      <*> parseMaybeOutPackageName
+
+parseIndWithAdmixtureSetDirect :: OP.Parser [IndWithAdmixtureSet]
+parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (
+    OP.long "admixString" <>
+    OP.short 'a' <>
+    OP.value [] <>
+    OP.help "Artificial individual to generate. Each setup is a string of the form \
+            \\"[id:group](population1=10+population2=30+...)\". Multiple setups can be listed separated by ;. \
+            \id and group are simple strings. \
+            \The population fractions must be simple integers and sum to 100."
+    )
+
+parseIndWithAdmixtureSetFromFile :: OP.Parser (Maybe FilePath)
+parseIndWithAdmixtureSetFromFile = OP.option (Just <$> OP.str) (OP.long "admixFile" <>
+    OP.value Nothing <>
+    OP.help "A file with admixStrings. \
+            \Works just as -a, but multiple values can be given separated by newline. \
+            \-a and --admixFile can be combined."
+    )
+
+parseMarginalizeMissing :: OP.Parser Bool
+parseMarginalizeMissing = OP.switch (
+    OP.long "marginalizeMissing" <>
+    OP.help "ignore missing SNPs in the per-population genotype frequency calculation \
+            \(except all individuals have missing information for a given SNP)"
+    )
