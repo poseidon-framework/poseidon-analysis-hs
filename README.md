@@ -18,22 +18,3 @@ To install the development version of poseidon-analysis-hs/xerxes you can follow
 2. Clone this repository
 3. Execute `stack install` inside the repository to build the tool and copy the executables to `~/.local/bin` (which you may want to add to your path). This will install the compiler and all dependencies into folders that won't interfere with any installation you might already have.
 4. To run the tests, execute `stack test` inside the repository to build and run tests.
-
-### Preparing a new stable release
-
-The Github Actions script in `.github/workflows/release.yml` registers a new draft release and automatically builds and uploads xerxes binaries when a new Git tag with the prefix `v*` is pushed. 
-
-```bash
-# locally register a new tag (e.g. 0.3.1)
-git tag -a v0.3.1 -m "see CHANGELOG.md"
-# push tag
-git push origin v0.3.1
-```
-
-In case of a failing build delete the tag and the release draft on Github and then delete the tag locally with
-
-```bash
-git tag -d v0.3.1
-```
-
-before rerunning the procedure above.
