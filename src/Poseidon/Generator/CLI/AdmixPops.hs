@@ -14,16 +14,17 @@ import           Data.Ratio                    ((%))
 import           Data.Time                     (getCurrentTime)
 import           Pipes
 import qualified Pipes.Prelude                 as P
-import           Pipes.Safe                    (runSafeT)
+import           Pipes.Safe                    (SafeT, runSafeT)
 import           Poseidon.GenotypeData
 import           Poseidon.Janno
 import           Poseidon.Package
 import           Poseidon.Utils
-import           SequenceFormats.Eigenstrat    (EigenstratIndEntry (..),
-                                                writeEigenstrat)
+import           SequenceFormats.Eigenstrat
 import           SequenceFormats.Plink         (writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
+import Lens.Family2 (view)
+import qualified Pipes.Group as PG
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
@@ -77,6 +78,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     let [outInd, outSnp, outGeno] = case outFormat of
             GenotypeFormatEigenstrat -> [outName <.> ".ind", outName <.> ".snp", outName <.> ".geno"]
             GenotypeFormatPlink -> [outName <.> ".fam", outName <.> ".bim", outName <.> ".bed"]
+    let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
     let genotypeData = GenotypeDataSpec outFormat outGeno Nothing outSnp Nothing outInd Nothing Nothing
         pac = newMinimalPackageTemplate outPath "admixpops_package" genotypeData
     liftIO $ writePoseidonPackage pac
@@ -87,17 +89,34 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     liftIO $ catch (
         runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
-            let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
-                newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
+            let newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
-            runEffect $ eigenstratProd >->
-                printSNPCopyProgress logEnv currentTime >->
-                P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
-                outConsumer
+            if True
+            then do 
+                runEffect $ eigenstratProd >->
+                    printSNPCopyProgress logEnv currentTime >->
+                    P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
+                    outConsumer
+            else do
+                let eigenstratProdInChunks = chunkEigenstratByNrSnps 5000 eigenstratProd
+                    chunky = PG.maps sampleChunk eigenstratProdInChunks
+                    eigenstratDeChunked = PG.concats chunky
+                runEffect $ eigenstratDeChunked >->
+                    printSNPCopyProgress logEnv currentTime >->
+                    outConsumer
+                    --P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
+                    
         ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
     logInfo "Done"
+
+chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
+
+sampleChunk :: m (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
+               m (EigenstratSnpEntry, GenoLine) (SafeT IO) r
+sampleChunk x = id x
+
 
 renderRequestedInds :: [IndWithAdmixtureSet] -> String
 renderRequestedInds requestedInds =
