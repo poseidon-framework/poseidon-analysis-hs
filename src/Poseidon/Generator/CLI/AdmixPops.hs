@@ -11,6 +11,7 @@ import           Control.Monad.Reader          (ask)
 import           Data.List
 import           Data.Maybe
 import           Data.Ratio                    ((%))
+import           Data.Time                     (getCurrentTime)
 import           Pipes
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (runSafeT)
@@ -82,6 +83,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     -- compile genotype data
     logInfo "Compiling individuals"
     logEnv <- ask
+    currentTime <- liftIO getCurrentTime
     liftIO $ catch (
         runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
@@ -91,7 +93,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
             runEffect $ eigenstratProd >->
-                printSNPCopyProgress >->
+                printSNPCopyProgress logEnv currentTime >->
                 P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
                 outConsumer
         ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
