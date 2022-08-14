@@ -23,8 +23,10 @@ import           SequenceFormats.Eigenstrat
 import           SequenceFormats.Plink         (writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
-import Lens.Family2 (view)
+import Lens.Family2 (view, over)
 import qualified Pipes.Group as PG
+import Control.Monad.Random
+import Data.IORef
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
@@ -93,30 +95,38 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
-            if True
+            if False
             then do 
                 runEffect $ eigenstratProd >->
                     printSNPCopyProgress logEnv currentTime >->
                     P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
                     outConsumer
             else do
-                let eigenstratProdInChunks = chunkEigenstratByNrSnps 5000 eigenstratProd
-                    chunky = PG.maps sampleChunk eigenstratProdInChunks
-                    eigenstratDeChunked = PG.concats chunky
-                runEffect $ eigenstratDeChunked >->
+                runEffect $ eigenstratProd >->
                     printSNPCopyProgress logEnv currentTime >->
+                    sampleChunk logEnv popsFracsInds >->
                     outConsumer
-                    --P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
-                    
         ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
     logInfo "Done"
 
 chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
 
-sampleChunk :: m (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
-               m (EigenstratSnpEntry, GenoLine) (SafeT IO) r
-sampleChunk x = id x
+sel :: (EigenstratSnpEntry, GenoLine) -> (EigenstratSnpEntry, GenoLine)
+sel = id
 
+sampleChunk :: (MonadIO m) => LogEnv -> [[([Int], Rational)]] -> Pipe (EigenstratSnpEntry, GenoLine) (EigenstratSnpEntry, GenoLine) m ()
+sampleChunk logEnv infoForIndividualInd = do
+    snpCounterRef <- liftIO $ newIORef (0 :: Int)
+    indRef <- liftIO $ newIORef $ replicate (length infoForIndividualInd) (0 :: Int)
+    for cat $ \val -> do
+        n <- liftIO $ readIORef snpCounterRef
+        s <- liftIO $ readIORef indRef
+        when (n `rem` 5000 == 0) $ do
+            logWithEnv logEnv $ logInfo $ show n ++ ": " ++ show s
+            liftIO $ modifyIORef indRef (map (+1))
+        let valMod = val
+        liftIO $ modifyIORef snpCounterRef (+1)
+        yield valMod
 
 renderRequestedInds :: [IndWithAdmixtureSet] -> String
 renderRequestedInds requestedInds =
