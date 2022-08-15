@@ -25,6 +25,7 @@ import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
 import Lens.Family2 (view)
 import qualified Pipes.Group as PG
+import Data.Function ((&))
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
@@ -100,18 +101,18 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
                     P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
                     outConsumer
             else do
-                let eigenstratProdInChunks = chunkEigenstratByNrSnps 5000 eigenstratProd
-                    chunky = PG.maps sampleChunk eigenstratProdInChunks
-                    eigenstratDeChunked = PG.concats chunky
-                runEffect $ eigenstratDeChunked >->
+                runEffect $ (
+                        eigenstratProd &
+                        chunkEigenstratByNrSnps 5000 &
+                        PG.maps sampleChunk &
+                        PG.concats
+                    ) >->
                     printSNPCopyProgress logEnv currentTime >->
                     outConsumer
-                    --P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
-                    
         ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
     logInfo "Done"
-
-chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
+    where
+        chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
 
 sampleChunk :: Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
                Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
