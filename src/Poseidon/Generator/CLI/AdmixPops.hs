@@ -113,9 +113,13 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
 
 chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
 
-sampleChunk :: m (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
-               m (EigenstratSnpEntry, GenoLine) (SafeT IO) r
-sampleChunk x = id x
+sampleChunk :: Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
+               Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
+sampleChunk prod = for prod handleEntry
+  where
+    handleEntry :: (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+    handleEntry x = do
+        yield x
 
 
 renderRequestedInds :: [IndWithAdmixtureSet] -> String
