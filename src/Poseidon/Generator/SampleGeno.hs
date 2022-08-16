@@ -10,33 +10,41 @@ import qualified Data.Vector                as V
 import           Pipes
 import           Pipes.Safe
 import           SequenceFormats.Eigenstrat
+import Poseidon.Utils (PoseidonLogIO, logWithEnv, LogEnv, logDebug)
 
 -- admixpops
 
-samplePerChunk :: 
-       [IndAdmixpops]
-    -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
-    -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
-samplePerChunk inds prod = do
-    sampledSourceInds <- liftIO $ mapM sampleIndividual inds
+samplePerChunk :: (MonadIO m) =>
+       LogEnv
+    -> [IndAdmixpops]
+    -> Producer (EigenstratSnpEntry, GenoLine) m r
+    -> Producer (EigenstratSnpEntry, GenoLine) m r
+samplePerChunk logEnv inds prod = do
+    sampledSourceInds <- mapM (sampleIndividual logEnv) inds
     for prod (handleEntry sampledSourceInds)
   where
-    handleEntry :: [Int] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+    handleEntry :: (MonadIO m) => [Int] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) m ()
     handleEntry sampledInds (snpEntry, genoLine) = do
         let newGenoLine = V.fromList $ [genoLine V.! i | i <- sampledInds]
         yield (snpEntry, newGenoLine)
 
-sampleIndividual :: IndAdmixpops -> IO Int
-sampleIndividual ind = do
+sampleIndividual :: (MonadIO m) => LogEnv -> IndAdmixpops -> m Int
+sampleIndividual logEnv ind = do
     gen <- liftIO getStdGen
     let indName = _indName ind
-        popSet = (\x -> zip (map (\y -> (_popName y, _popInds y)) x) (map _popFrac x)) $ _popSet ind
-        sampledPop = sampleWeightedList gen popSet
-        sampledSourceInds = (\(_,inds) -> sampleWeightedList gen $ zip inds (repeat 1)) sampledPop
-    liftIO $ putStrLn $ show $ fst sampledPop
-    liftIO $ putStrLn $ show sampledSourceInds
+        popSet =  popAdmixPopsToNestedTuple $ _popSet ind
+        sampledPopTuple = sampleWeightedList gen popSet
+        sampledPopName = fst sampledPopTuple
+        sampledSourceInd = sampleWeightedList gen $ zip (snd sampledPopTuple) (repeat 1)
+    logWithEnv logEnv . logDebug $
+        "Sampling for artificial individual " ++
+        show indName ++
+        " - Pop: " ++ show sampledPopName ++
+        " - Ind: " ++ show sampledSourceInd
     _ <- liftIO newStdGen
-    return sampledSourceInds
+    return sampledSourceInd
+    where
+        popAdmixPopsToNestedTuple x = zip (map (\y -> (_popName y, _popInds y)) x) (map _popFrac x)
 
 samplePerSNP ::
        Bool

@@ -104,7 +104,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
                 runEffect $ (
                         eigenstratProd &
                         chunkEigenstratByNrSnps 5000 &
-                        PG.maps (samplePerChunk preparedInds) &
+                        PG.maps (samplePerChunk logEnv preparedInds) &
                         PG.concats
                     ) >->
                     printSNPCopyProgress logEnv currentTime >->
