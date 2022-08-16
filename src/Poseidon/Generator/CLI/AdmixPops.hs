@@ -152,5 +152,8 @@ extractIndsPerPop (InPopAdmixpops pop_ frac_) relevantPackages = do
     let allPackageNames = map posPacTitle relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages
     let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == pop_
-        inds = map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries)
-    return (PopAdmixpops pop_ frac_ inds)
+        indNames = map extractIndName $ filter filterFunc (zipGroup allPackageNames allIndEntries)
+        indIDs = map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries)
+    return (PopAdmixpops pop_ frac_ (zip indNames indIDs))
+    where 
+        extractIndName (_,_,EigenstratIndEntry x _ _) = x

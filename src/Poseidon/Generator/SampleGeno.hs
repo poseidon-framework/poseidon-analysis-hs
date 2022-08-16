@@ -38,11 +38,9 @@ sampleIndividual logEnv ind = do
         sampledSourceInd = sampleWeightedList gen $ zip (snd sampledPopTuple) (repeat 1)
     logWithEnv logEnv . logDebug $
         "Sampling for artificial individual " ++
-        show indName ++
-        " - Pop: " ++ show sampledPopName ++
-        " - Ind: " ++ show sampledSourceInd
+        indName ++ ": " ++ sampledPopName ++ " " ++ (fst sampledSourceInd)
     _ <- liftIO newStdGen
-    return sampledSourceInd
+    return $ snd sampledSourceInd
     where
         popAdmixPopsToNestedTuple x = zip (map (\y -> (_popName y, _popInds y)) x) (map _popFrac x)
 
@@ -59,7 +57,7 @@ samplePerSNPForOneOutInd :: Bool -> IndAdmixpops -> GenoLine -> SafeT IO GenoEnt
 samplePerSNPForOneOutInd marginalizeMissing ind genoLine = do
     gen <- liftIO getStdGen
     let indIDsAndFracs = map (\(PopAdmixpops _ frac_ inds_) -> (inds_, frac_)) $ _popSet ind
-    let sampledGenotypesPerPop = map (\(x,y) -> (sampleWeightedList gen $ getGenotypeFrequency marginalizeMissing x genoLine, y)) indIDsAndFracs
+    let sampledGenotypesPerPop = map (\(x,y) -> (sampleWeightedList gen $ getGenotypeFrequency marginalizeMissing (map snd x) genoLine, y)) indIDsAndFracs
     let sampledGenotypeAcrossPops = sampleWeightedList gen sampledGenotypesPerPop
     _ <- liftIO newStdGen
     return sampledGenotypeAcrossPops

@@ -13,7 +13,7 @@ data IndAdmixpops = IndAdmixpops {
 data PopAdmixpops = PopAdmixpops {
       _popName :: String
     , _popFrac :: Rational
-    , _popInds :: [Int]
+    , _popInds :: [(String, Int)]
 } deriving (Show)
 
 data InIndAdmixpops = InIndAdmixpops {
