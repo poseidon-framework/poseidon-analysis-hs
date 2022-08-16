@@ -27,11 +27,18 @@ import Lens.Family2 (view)
 import qualified Pipes.Group as PG
 import Data.Function ((&))
 
+data AdmixPopsMethodSettings = 
+    PerSNP {
+        _admixMarginalizeMissing :: Bool
+    } | InChunks {
+        _admixChunkSize :: Int
+    }
+
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
     , _admixIndWithAdmixtureSet     :: [InIndAdmixpops]
     , _admixIndWithAdmixtureSetFile :: Maybe FilePath
-    , _admixMarginalizeMissing      :: Bool
+    , _admixMethodSettings          :: AdmixPopsMethodSettings
     , _admixOutFormat               :: GenotypeFormatSpec
     , _admixOutPath                 :: FilePath
     , _forgeOutPacName              :: Maybe String
@@ -47,7 +54,16 @@ pacReadOpts = defaultPackageReadOptions {
     }
 
 runAdmixPops :: AdmixPopsOptions -> PoseidonLogIO ()
-runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outPath maybeOutName) = do
+runAdmixPops (
+    AdmixPopsOptions
+        genoSources
+        popsWithFracsDirect
+        popsWithFracsFile
+        methodSetting
+        outFormat
+        outPath
+        maybeOutName
+    ) = do
     -- compile individuals
     popsWithFracsFromFile <- case popsWithFracsFile of
         Nothing -> return []
@@ -94,21 +110,21 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
-            if False
-            then do
-                runEffect $ eigenstratProd >->
-                    printSNPCopyProgress logEnv currentTime >->
-                    P.mapM (samplePerSNP marginalizeMissing preparedInds) >->
-                    outConsumer
-            else do
-                runEffect $ (
-                        eigenstratProd &
-                        chunkEigenstratByNrSnps 5000 &
-                        PG.maps (samplePerChunk logEnv preparedInds) &
-                        PG.concats
-                    ) >->
-                    printSNPCopyProgress logEnv currentTime >->
-                    outConsumer
+            case methodSetting of
+                PerSNP marginalizeMissing -> do
+                    runEffect $ eigenstratProd >->
+                        printSNPCopyProgress logEnv currentTime >->
+                        P.mapM (samplePerSNP marginalizeMissing preparedInds) >->
+                        outConsumer
+                InChunks chunkSize -> do
+                    runEffect $ (
+                            eigenstratProd &
+                            chunkEigenstratByNrSnps chunkSize &
+                            PG.maps (samplePerChunk logEnv preparedInds) &
+                            PG.concats
+                        ) >->
+                        printSNPCopyProgress logEnv currentTime >->
+                        outConsumer
         ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
     logInfo "Done"
     where

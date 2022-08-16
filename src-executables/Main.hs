@@ -9,7 +9,8 @@ import           Poseidon.Analysis.FStatsConfig          (FStatInput (..),
                                                           fStatSpecParser)
 import           Poseidon.Analysis.Utils                 (JackknifeMode (..))
 import           Poseidon.Generator.CLI.AdmixPops        (AdmixPopsOptions (..),
-                                                          runAdmixPops)
+                                                          runAdmixPops,
+                                                          AdmixPopsMethodSettings (..))
 import           Poseidon.Generator.Parsers              (readIndWithAdmixtureSetString)
 import           Poseidon.Generator.Types                (InIndAdmixpops)
 
@@ -226,7 +227,7 @@ admixPopsOptParser :: OP.Parser AdmixPopsOptions
 admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseIndWithAdmixtureSetDirect
                                       <*> parseIndWithAdmixtureSetFromFile
-                                      <*> parseMarginalizeMissing
+                                      <*> parseAdmixPopsMethodSettings
                                       <*> parseOutGenotypeFormat True
                                       <*> parseOutPackagePath
                                       <*> parseMaybeOutPackageName
@@ -250,9 +251,26 @@ parseIndWithAdmixtureSetFromFile = OP.option (Just <$> OP.str) (OP.long "admixFi
             \-a and --admixFile can be combined."
     )
 
+parseAdmixPopsMethodSettings :: OP.Parser AdmixPopsMethodSettings
+parseAdmixPopsMethodSettings = (PerSNP <$> parseMarginalizeMissing) <|> (parseInChunks *> (InChunks <$> parseChunkSize))
+
 parseMarginalizeMissing :: OP.Parser Bool
 parseMarginalizeMissing = OP.switch (
     OP.long "marginalizeMissing" <>
     OP.help "ignore missing SNPs in the per-population genotype frequency calculation \
             \(except all individuals have missing information for a given SNP)"
+    )
+
+parseInChunks :: OP.Parser ()
+parseInChunks = OP.flag' () (
+    OP.long "inChunks" <>
+    OP.help "construct the artificial individuals by sampling contiguous stretches of SNPs \
+            \('chunks') from random individuals in the source populations"
+    )
+
+parseChunkSize :: OP.Parser Int
+parseChunkSize = OP.option OP.auto (
+    OP.long "chunkSize" <>
+    OP.value 5000 <>
+    OP.help "The number of SNPs in one chunks"
     )
