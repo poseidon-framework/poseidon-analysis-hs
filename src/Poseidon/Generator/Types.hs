@@ -22,13 +22,13 @@ instance Show IndWithAdmixtureSet where
         "[" ++ _admixInd ++ ":" ++ _admixUnit ++ "]" ++
         "(" ++ intercalate "+" (map show _popFracList) ++ ")"
 
-data AdmixtureSet = AdmixtureSet {
+newtype AdmixtureSet = AdmixtureSet {
     _popFracList :: [PopulationWithFraction]
 } deriving (Show)
 
 data PopulationWithFraction = PopulationWithFraction {
       pop  :: String
-    , frac :: Int
+    , frac :: Rational
 }
 
 instance Show PopulationWithFraction where

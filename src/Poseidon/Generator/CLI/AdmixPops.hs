@@ -145,7 +145,7 @@ checkIndsWithAdmixtureSets requestedInds = do
         checkPopFracList x = do
             let xs = (_popFracList . _admixSet) x
                 fracs = map frac xs
-            when (sum fracs /= 100) $ do
+            when (sum fracs /= 1) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Fractions in " ++ show x ++ " do not to sum to 100%"
 
@@ -163,4 +163,4 @@ extractIndsPerPop (PopulationWithFraction _pop _frac) relevantPackages = do
     let allPackageNames = map posPacTitle relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages
     let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == _pop
-    return (map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries), toInteger _frac % 100)
+    return (map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries), _frac)

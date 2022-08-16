@@ -10,6 +10,7 @@ import           Control.Monad            (guard)
 import qualified Text.Parsec              as P
 import qualified Text.Parsec.Number       as P
 import qualified Text.Parsec.String       as P
+import           Data.Ratio               ((%))
 
 readIndWithAdmixtureSetString :: String -> Either String [IndWithAdmixtureSet]
 readIndWithAdmixtureSetString s = case P.runParser indWithAdmixtureSetMultiParser () "" s of
@@ -44,8 +45,8 @@ parsePopulationWithFraction :: P.Parser PopulationWithFraction
 parsePopulationWithFraction = do
     popP <- P.many (P.noneOf "=")
     _ <- P.oneOf "="
-    fracP <- read <$> P.many1 P.digit
-    return (PopulationWithFraction popP fracP)
+    percP <- read <$> P.many1 P.digit
+    return (PopulationWithFraction popP (percP % 100))
 
 readIndWithPositionString :: String -> Either String [IndWithPosition]
 readIndWithPositionString s = case P.runParser indWithPositionParser () "" s of
