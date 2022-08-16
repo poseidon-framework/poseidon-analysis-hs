@@ -18,27 +18,25 @@ samplePerChunk ::
     -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
     -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
 samplePerChunk inds prod = do
-    gen <- liftIO getStdGen
-    let huhu = head $ map _popSet inds
-    let bobo = zip (map _popName huhu) (map _popFrac huhu)
-    let schuhu = sampleWeightedList gen bobo
-    liftIO $ putStrLn $ show schuhu
-    _ <- liftIO newStdGen
-    for prod (handleEntry inds)
+    sampledSourceInds <- liftIO $ mapM sampleIndividual inds
+    for prod (handleEntry sampledSourceInds)
   where
-    handleEntry :: [IndAdmixpops] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
-    handleEntry inds_ x = do
-        yield x
+    handleEntry :: [Int] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+    handleEntry sampledInds (snpEntry, genoLine) = do
+        let newGenoLine = V.fromList $ [genoLine V.! i | i <- sampledInds]
+        yield (snpEntry, newGenoLine)
 
-getFracPerInd :: IndAdmixpops -> [(Int, Rational)]
-getFracPerInd x = 
-    let popsSets = _popSet x
-        popsFracs = map _popFrac popsSets
-        popsInds = map _popInds popsSets
-        lengthPopsInds = map length popsInds
-        fracPerIndPerPop = map (\(x,y) -> x / (fromIntegral y)) $ zip popsFracs lengthPopsInds
-        popFracsPerInd = map (\(x, y) -> replicate y x) $ zip fracPerIndPerPop lengthPopsInds
-    in zip (concat popsInds) (concat popFracsPerInd)
+sampleIndividual :: IndAdmixpops -> IO Int
+sampleIndividual ind = do
+    gen <- liftIO getStdGen
+    let indName = _indName ind
+        popSet = (\x -> zip (map (\y -> (_popName y, _popInds y)) x) (map _popFrac x)) $ _popSet ind
+        sampledPop = sampleWeightedList gen popSet
+        sampledSourceInds = (\(_,inds) -> sampleWeightedList gen $ zip inds (repeat 1)) sampledPop
+    liftIO $ putStrLn $ show $ fst sampledPop
+    liftIO $ putStrLn $ show sampledSourceInds
+    _ <- liftIO newStdGen
+    return sampledSourceInds
 
 samplePerSNP ::
        Bool
