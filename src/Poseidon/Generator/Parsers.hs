@@ -11,13 +11,21 @@ import qualified Text.Parsec              as P
 import qualified Text.Parsec.Number       as P
 import qualified Text.Parsec.String       as P
 import           Data.Ratio               ((%))
+import Data.List (intercalate)
 
-readIndWithAdmixtureSetString :: String -> Either String [IndWithAdmixtureSet]
+renderRequestedInds :: [InIndAdmixpops] -> String
+renderRequestedInds requestedInds =
+    let indString = intercalate ";" $ map show $ take 5 requestedInds
+    in if length requestedInds > 5
+       then indString ++ "..."
+       else indString
+
+readIndWithAdmixtureSetString :: String -> Either String [InIndAdmixpops]
 readIndWithAdmixtureSetString s = case P.runParser indWithAdmixtureSetMultiParser () "" s of
     Left p  -> Left (show p)
     Right x -> Right x
 
-readIndWithAdmixtureSetFromFile :: FilePath -> IO [IndWithAdmixtureSet]
+readIndWithAdmixtureSetFromFile :: FilePath -> IO [InIndAdmixpops]
 readIndWithAdmixtureSetFromFile file = do
     let multiParser = indWithAdmixtureSetMultiParser `P.sepBy1` (P.newline *> P.spaces)
     eitherParseResult <- P.parseFromFile (P.spaces *> multiParser <* P.spaces) file
@@ -25,10 +33,10 @@ readIndWithAdmixtureSetFromFile file = do
         Left err -> throwIO $ PoseidonGeneratorCLIParsingException (show err)
         Right r  -> return (concat r)
 
-indWithAdmixtureSetMultiParser :: P.Parser [IndWithAdmixtureSet]
+indWithAdmixtureSetMultiParser :: P.Parser [InIndAdmixpops]
 indWithAdmixtureSetMultiParser = P.try (P.sepBy parseIndWithAdmixtureSet (P.char ';' <* P.spaces))
 
-parseIndWithAdmixtureSet :: P.Parser IndWithAdmixtureSet
+parseIndWithAdmixtureSet :: P.Parser InIndAdmixpops
 parseIndWithAdmixtureSet = do
     _ <- P.oneOf "["
     indP <- P.manyTill P.anyChar (P.string ":")
@@ -36,17 +44,17 @@ parseIndWithAdmixtureSet = do
     _ <- P.oneOf "("
     setP <- populationWithFractionMultiParser
     _ <- P.oneOf ")"
-    return (IndWithAdmixtureSet indP unitP (AdmixtureSet setP))
+    return (InIndAdmixpops indP unitP setP)
 
-populationWithFractionMultiParser :: P.Parser [PopulationWithFraction]
+populationWithFractionMultiParser :: P.Parser [InPopAdmixpops]
 populationWithFractionMultiParser = P.try (P.sepBy parsePopulationWithFraction (P.char '+' <* P.spaces))
 
-parsePopulationWithFraction :: P.Parser PopulationWithFraction
+parsePopulationWithFraction :: P.Parser InPopAdmixpops
 parsePopulationWithFraction = do
     popP <- P.many (P.noneOf "=")
     _ <- P.oneOf "="
     percP <- read <$> P.many1 P.digit
-    return (PopulationWithFraction popP (percP % 100))
+    return (InPopAdmixpops popP (percP % 100))
 
 readIndWithPositionString :: String -> Either String [IndWithPosition]
 readIndWithPositionString s = case P.runParser indWithPositionParser () "" s of

@@ -13,26 +13,29 @@ import           SequenceFormats.Eigenstrat
 
 -- admixpops
 
-sampleGenoForMultipleIndWithAdmixtureSet ::
+samplePerChunk :: Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
+               Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
+samplePerChunk prod = for prod handleEntry
+  where
+    handleEntry :: (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+    handleEntry x = do
+        yield x
+
+samplePerSNP ::
        Bool
-    -> [[([Int], Rational)]]
+    -> [IndAdmixpops]
     -> (EigenstratSnpEntry, GenoLine)
     -> SafeT IO (EigenstratSnpEntry, GenoLine)
-sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing infoForIndividualInd (snpEntry, genoLine) = do
-    entries <- mapM (\x -> sampleGenoForOneIndWithAdmixtureSet marginalizeMissing x genoLine) infoForIndividualInd
+samplePerSNP marginalizeMissing inds (snpEntry, genoLine) = do
+    entries <- mapM (\x -> samplePerSNPForOneOutInd marginalizeMissing x genoLine) inds
     return (snpEntry, V.fromList entries)
 
-sampleGenoForOneIndWithAdmixtureSet :: Bool -> [([Int], Rational)] -> GenoLine -> SafeT IO GenoEntry
-sampleGenoForOneIndWithAdmixtureSet marginalizeMissing xs genoLine = do
+samplePerSNPForOneOutInd :: Bool -> IndAdmixpops -> GenoLine -> SafeT IO GenoEntry
+samplePerSNPForOneOutInd marginalizeMissing ind genoLine = do
     gen <- liftIO getStdGen
-    --liftIO $ putStrLn $ show $ xs
-    --liftIO $ putStrLn $ show $ map (\(x,y) -> (getGenotypeFrequency x genoLine, y)) xs
-    let sampledGenotypesPerPop = map (\(x,y) -> (sampleWeightedList gen $ getGenotypeFrequency marginalizeMissing x genoLine, y)) xs
-    --liftIO $ putStrLn $ show sampledGenotypesPerPop
-    --liftIO newStdGen -- do I need a second one?
-    --gen <- liftIO getStdGen
+    let indIDsAndFracs = map (\(PopAdmixpops _ frac_ inds_) -> (inds_, frac_)) $ _popSet ind
+    let sampledGenotypesPerPop = map (\(x,y) -> (sampleWeightedList gen $ getGenotypeFrequency marginalizeMissing x genoLine, y)) indIDsAndFracs
     let sampledGenotypeAcrossPops = sampleWeightedList gen sampledGenotypesPerPop
-    --liftIO $ putStrLn $ show sampledGenotypeAcrossPops
     _ <- liftIO newStdGen
     return sampledGenotypeAcrossPops
 

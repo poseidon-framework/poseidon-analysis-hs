@@ -29,7 +29,7 @@ import Data.Function ((&))
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
-    , _admixIndWithAdmixtureSet     :: [IndWithAdmixtureSet]
+    , _admixIndWithAdmixtureSet     :: [InIndAdmixpops]
     , _admixIndWithAdmixtureSetFile :: Maybe FilePath
     , _admixMarginalizeMissing      :: Bool
     , _admixOutFormat               :: GenotypeFormatSpec
@@ -62,11 +62,11 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     pseudoPackages <- liftIO $ mapM makePseudoPackageFromGenotypeData $ [getGenoDirect x | x@GenoDirect {} <- genoSources]
     logInfo $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
     let allPackages = properPackages ++ pseudoPackages
-    -- determine relevant packages and indices
-    let popsWithFracs = map (_popFracList . _admixSet) requestedInds
-        pops = map (map pop) popsWithFracs
-    relevantPackages <- liftIO $ filterPackagesByPops (concat pops) allPackages
-    popsFracsInds <- liftIO $  mapM (mapM (`extractIndsPerPop` relevantPackages)) popsWithFracs
+    -- determine relevant packages
+    let popNames = concat $ map (map _inPopName) $ map _inPopSet requestedInds
+    relevantPackages <- liftIO $ filterPackagesByPops popNames allPackages
+    -- gather additional info for requested inds
+    preparedInds <- liftIO $ mapM (`gatherInfoForInd` relevantPackages) requestedInds
     -- create new package --
     let outName = case maybeOutName of -- take basename of outPath, if name is not provided
             Just x  -> x
@@ -90,21 +90,21 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     liftIO $ catch (
         runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
-            let newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
+            let newIndEntries = map (\x -> EigenstratIndEntry (_indName x) Unknown (_groupName x)) preparedInds
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
             if True
-            then do 
+            then do
                 runEffect $ eigenstratProd >->
                     printSNPCopyProgress logEnv currentTime >->
-                    P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
+                    P.mapM (samplePerSNP marginalizeMissing preparedInds) >->
                     outConsumer
             else do
                 runEffect $ (
                         eigenstratProd &
                         chunkEigenstratByNrSnps 5000 &
-                        PG.maps sampleChunk &
+                        PG.maps samplePerChunk &
                         PG.concats
                     ) >->
                     printSNPCopyProgress logEnv currentTime >->
@@ -114,37 +114,21 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     where
         chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
 
-sampleChunk :: Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
-               Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
-sampleChunk prod = for prod handleEntry
-  where
-    handleEntry :: (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
-    handleEntry x = do
-        yield x
-
-
-renderRequestedInds :: [IndWithAdmixtureSet] -> String
-renderRequestedInds requestedInds =
-    let indString = intercalate ";" $ map show $ take 5 requestedInds
-    in if length requestedInds > 5
-       then indString ++ "..."
-       else indString
-
-checkIndsWithAdmixtureSets :: [IndWithAdmixtureSet] -> IO ()
+checkIndsWithAdmixtureSets :: [InIndAdmixpops] -> IO ()
 checkIndsWithAdmixtureSets requestedInds = do
     checkDuplicateIndNames requestedInds
     mapM_ checkPopFracList requestedInds
     where
-        checkDuplicateIndNames :: [IndWithAdmixtureSet] -> IO ()
+        checkDuplicateIndNames :: [InIndAdmixpops] -> IO ()
         checkDuplicateIndNames xs =
-            let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map _admixInd xs
+            let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map _inIndName xs
             in unless (null individualsGrouped) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Duplicate individual names: " ++ intercalate "," (nub $ concat individualsGrouped)
-        checkPopFracList :: IndWithAdmixtureSet -> IO ()
+        checkPopFracList :: InIndAdmixpops -> IO ()
         checkPopFracList x = do
-            let xs = (_popFracList . _admixSet) x
-                fracs = map frac xs
+            let xs = _inPopSet x
+                fracs = map _inPopFrac xs
             when (sum fracs /= 1) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Fractions in " ++ show x ++ " do not to sum to 100%"
@@ -158,9 +142,15 @@ filterPackagesByPops pops packages = do
         then return (Just pac)
         else return Nothing
 
-extractIndsPerPop :: PopulationWithFraction -> [PoseidonPackage] -> IO ([Int], Rational)
-extractIndsPerPop (PopulationWithFraction _pop _frac) relevantPackages = do
+gatherInfoForInd :: InIndAdmixpops -> [PoseidonPackage] -> IO IndAdmixpops
+gatherInfoForInd (InIndAdmixpops name_ group_ set_) pacs = do
+    inds <- mapM (`extractIndsPerPop` pacs) set_
+    return $ IndAdmixpops name_ group_ inds
+
+extractIndsPerPop :: InPopAdmixpops -> [PoseidonPackage] -> IO PopAdmixpops
+extractIndsPerPop (InPopAdmixpops pop_ frac_) relevantPackages = do
     let allPackageNames = map posPacTitle relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages
-    let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == _pop
-    return (map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries), _frac)
+    let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == pop_
+        inds = map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries)
+    return (PopAdmixpops pop_ frac_ inds)

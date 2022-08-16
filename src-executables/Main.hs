@@ -11,7 +11,7 @@ import           Poseidon.Analysis.Utils                 (JackknifeMode (..))
 import           Poseidon.Generator.CLI.AdmixPops        (AdmixPopsOptions (..),
                                                           runAdmixPops)
 import           Poseidon.Generator.Parsers              (readIndWithAdmixtureSetString)
-import           Poseidon.Generator.Types                (IndWithAdmixtureSet)
+import           Poseidon.Generator.Types                (InIndAdmixpops)
 
 import           Control.Applicative                     ((<|>))
 import           Control.Exception                       (catch)
@@ -231,7 +231,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseOutPackagePath
                                       <*> parseMaybeOutPackageName
 
-parseIndWithAdmixtureSetDirect :: OP.Parser [IndWithAdmixtureSet]
+parseIndWithAdmixtureSetDirect :: OP.Parser [InIndAdmixpops]
 parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (
     OP.long "admixString" <>
     OP.short 'a' <>
