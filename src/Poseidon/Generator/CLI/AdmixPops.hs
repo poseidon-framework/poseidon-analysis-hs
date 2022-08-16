@@ -94,7 +94,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
-            if True
+            if False
             then do
                 runEffect $ eigenstratProd >->
                     printSNPCopyProgress logEnv currentTime >->
@@ -104,7 +104,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
                 runEffect $ (
                         eigenstratProd &
                         chunkEigenstratByNrSnps 5000 &
-                        PG.maps samplePerChunk &
+                        PG.maps (samplePerChunk preparedInds) &
                         PG.concats
                     ) >->
                     printSNPCopyProgress logEnv currentTime >->

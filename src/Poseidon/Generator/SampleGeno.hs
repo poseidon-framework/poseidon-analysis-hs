@@ -13,13 +13,32 @@ import           SequenceFormats.Eigenstrat
 
 -- admixpops
 
-samplePerChunk :: Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r ->
-               Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
-samplePerChunk prod = for prod handleEntry
+samplePerChunk :: 
+       [IndAdmixpops]
+    -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
+    -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) r
+samplePerChunk inds prod = do
+    gen <- liftIO getStdGen
+    let huhu = head $ map _popSet inds
+    let bobo = zip (map _popName huhu) (map _popFrac huhu)
+    let schuhu = sampleWeightedList gen bobo
+    liftIO $ putStrLn $ show schuhu
+    _ <- liftIO newStdGen
+    for prod (handleEntry inds)
   where
-    handleEntry :: (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
-    handleEntry x = do
+    handleEntry :: [IndAdmixpops] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) (SafeT IO) ()
+    handleEntry inds_ x = do
         yield x
+
+getFracPerInd :: IndAdmixpops -> [(Int, Rational)]
+getFracPerInd x = 
+    let popsSets = _popSet x
+        popsFracs = map _popFrac popsSets
+        popsInds = map _popInds popsSets
+        lengthPopsInds = map length popsInds
+        fracPerIndPerPop = map (\(x,y) -> x / (fromIntegral y)) $ zip popsFracs lengthPopsInds
+        popFracsPerInd = map (\(x, y) -> replicate y x) $ zip fracPerIndPerPop lengthPopsInds
+    in zip (concat popsInds) (concat popFracsPerInd)
 
 samplePerSNP ::
        Bool
