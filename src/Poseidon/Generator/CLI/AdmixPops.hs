@@ -8,11 +8,14 @@ import           Poseidon.Generator.Utils
 import           Control.Exception             (catch, throwIO)
 import           Control.Monad                 (forM, unless, when)
 import           Control.Monad.Reader          (ask)
+import           Data.Function                 ((&))
 import           Data.List
 import           Data.Maybe
 import           Data.Ratio                    ((%))
 import           Data.Time                     (getCurrentTime)
+import           Lens.Family2                  (view)
 import           Pipes
+import qualified Pipes.Group                   as PG
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (SafeT, runSafeT)
 import           Poseidon.GenotypeData
@@ -23,11 +26,8 @@ import           SequenceFormats.Eigenstrat
 import           SequenceFormats.Plink         (writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
-import Lens.Family2 (view)
-import qualified Pipes.Group as PG
-import Data.Function ((&))
 
-data AdmixPopsMethodSettings = 
+data AdmixPopsMethodSettings =
     PerSNP {
         _admixMarginalizeMissing :: Bool
     } | InChunks {
@@ -171,5 +171,5 @@ extractIndsPerPop (InPopAdmixpops pop_ frac_) relevantPackages = do
         indNames = map extractIndName $ filter filterFunc (zipGroup allPackageNames allIndEntries)
         indIDs = map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries)
     return (PopAdmixpops pop_ frac_ (zip indNames indIDs))
-    where 
+    where
         extractIndName (_,_,EigenstratIndEntry x _ _) = x

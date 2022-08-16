@@ -8,9 +8,9 @@ import           Poseidon.Analysis.CLI.RAS               (FreqSpec (..),
 import           Poseidon.Analysis.FStatsConfig          (FStatInput (..),
                                                           fStatSpecParser)
 import           Poseidon.Analysis.Utils                 (JackknifeMode (..))
-import           Poseidon.Generator.CLI.AdmixPops        (AdmixPopsOptions (..),
-                                                          runAdmixPops,
-                                                          AdmixPopsMethodSettings (..))
+import           Poseidon.Generator.CLI.AdmixPops        (AdmixPopsMethodSettings (..),
+                                                          AdmixPopsOptions (..),
+                                                          runAdmixPops)
 import           Poseidon.Generator.Parsers              (readIndWithAdmixtureSetString)
 import           Poseidon.Generator.Types                (InIndAdmixpops)
 

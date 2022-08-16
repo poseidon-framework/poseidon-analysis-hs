@@ -7,11 +7,11 @@ import           Poseidon.Janno
 
 import           Control.Exception        (throwIO)
 import           Control.Monad            (guard)
+import           Data.List                (intercalate)
+import           Data.Ratio               ((%))
 import qualified Text.Parsec              as P
 import qualified Text.Parsec.Number       as P
 import qualified Text.Parsec.String       as P
-import           Data.Ratio               ((%))
-import Data.List (intercalate)
 
 renderRequestedInds :: [InIndAdmixpops] -> String
 renderRequestedInds requestedInds =

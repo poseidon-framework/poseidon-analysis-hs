@@ -9,8 +9,9 @@ import           Data.Ratio                 ((%))
 import qualified Data.Vector                as V
 import           Pipes
 import           Pipes.Safe
+import           Poseidon.Utils             (LogEnv, PoseidonLogIO, logDebug,
+                                             logWithEnv)
 import           SequenceFormats.Eigenstrat
-import Poseidon.Utils (PoseidonLogIO, logWithEnv, LogEnv, logDebug)
 
 -- admixpops
 
@@ -62,7 +63,7 @@ sampleSNPForOneOutInd marginalizeMissing ind genoLine = do
     _ <- liftIO newStdGen
     return sampledGenotypeAcrossPops
     where
-        sampleGenotypePerPop gen_ (x,y) = 
+        sampleGenotypePerPop gen_ (x,y) =
             let sampledGeno = sampleWeightedList gen_ $ getGenotypeFrequency marginalizeMissing (map snd x) genoLine
             in (sampledGeno, y)
 
