@@ -20,7 +20,7 @@ samplePerChunk :: (MonadIO m) =>
     -> Producer (EigenstratSnpEntry, GenoLine) m r
     -> Producer (EigenstratSnpEntry, GenoLine) m r
 samplePerChunk logEnv inds prod = do
-    sampledSourceInds <- mapM (sampleIndividual logEnv) inds
+    sampledSourceInds <- mapM (sampleInIndForChunk logEnv) inds
     for prod (handleEntry sampledSourceInds)
   where
     handleEntry :: (MonadIO m) => [Int] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) m ()
@@ -28,8 +28,8 @@ samplePerChunk logEnv inds prod = do
         let newGenoLine = V.fromList $ [genoLine V.! i | i <- sampledInds]
         yield (snpEntry, newGenoLine)
 
-sampleIndividual :: (MonadIO m) => LogEnv -> IndAdmixpops -> m Int
-sampleIndividual logEnv ind = do
+sampleInIndForChunk :: (MonadIO m) => LogEnv -> IndAdmixpops -> m Int
+sampleInIndForChunk logEnv ind = do
     gen <- liftIO getStdGen
     let indName = _indName ind
         popSet =  popAdmixPopsToNestedTuple $ _popSet ind
@@ -44,23 +44,27 @@ sampleIndividual logEnv ind = do
     where
         popAdmixPopsToNestedTuple x = zip (map (\y -> (_popName y, _popInds y)) x) (map _popFrac x)
 
-samplePerSNP ::
+samplePerSNP :: (MonadIO m) =>
        Bool
     -> [IndAdmixpops]
     -> (EigenstratSnpEntry, GenoLine)
-    -> SafeT IO (EigenstratSnpEntry, GenoLine)
+    -> m (EigenstratSnpEntry, GenoLine)
 samplePerSNP marginalizeMissing inds (snpEntry, genoLine) = do
-    entries <- mapM (\x -> samplePerSNPForOneOutInd marginalizeMissing x genoLine) inds
+    entries <- mapM (\x -> sampleSNPForOneOutInd marginalizeMissing x genoLine) inds
     return (snpEntry, V.fromList entries)
 
-samplePerSNPForOneOutInd :: Bool -> IndAdmixpops -> GenoLine -> SafeT IO GenoEntry
-samplePerSNPForOneOutInd marginalizeMissing ind genoLine = do
+sampleSNPForOneOutInd :: (MonadIO m) => Bool -> IndAdmixpops -> GenoLine -> m GenoEntry
+sampleSNPForOneOutInd marginalizeMissing ind genoLine = do
     gen <- liftIO getStdGen
     let indIDsAndFracs = map (\(PopAdmixpops _ frac_ inds_) -> (inds_, frac_)) $ _popSet ind
-    let sampledGenotypesPerPop = map (\(x,y) -> (sampleWeightedList gen $ getGenotypeFrequency marginalizeMissing (map snd x) genoLine, y)) indIDsAndFracs
+    let sampledGenotypesPerPop = map (sampleGenotypePerPop gen) indIDsAndFracs
     let sampledGenotypeAcrossPops = sampleWeightedList gen sampledGenotypesPerPop
     _ <- liftIO newStdGen
     return sampledGenotypeAcrossPops
+    where
+        sampleGenotypePerPop gen_ (x,y) = 
+            let sampledGeno = sampleWeightedList gen_ $ getGenotypeFrequency marginalizeMissing (map snd x) genoLine
+            in (sampledGeno, y)
 
 getGenotypeFrequency :: Bool -> [Int] -> GenoLine -> [(GenoEntry, Rational)]
 getGenotypeFrequency marginalizeMissing individualIndices genoLine =
