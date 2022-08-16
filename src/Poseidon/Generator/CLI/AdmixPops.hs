@@ -11,13 +11,12 @@ import           Control.Monad.Reader          (ask)
 import           Data.Function                 ((&))
 import           Data.List
 import           Data.Maybe
-import           Data.Ratio                    ((%))
 import           Data.Time                     (getCurrentTime)
 import           Lens.Family2                  (view)
 import           Pipes
 import qualified Pipes.Group                   as PG
 import qualified Pipes.Prelude                 as P
-import           Pipes.Safe                    (SafeT, runSafeT)
+import           Pipes.Safe                    (runSafeT)
 import           Poseidon.GenotypeData
 import           Poseidon.Janno
 import           Poseidon.Package

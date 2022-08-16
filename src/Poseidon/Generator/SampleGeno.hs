@@ -9,8 +9,7 @@ import           Data.Ratio                 ((%))
 import qualified Data.Vector                as V
 import           Pipes
 import           Pipes.Safe
-import           Poseidon.Utils             (LogEnv, PoseidonLogIO, logDebug,
-                                             logWithEnv)
+import           Poseidon.Utils             (LogEnv, logDebug, logWithEnv)
 import           SequenceFormats.Eigenstrat
 
 -- admixpops

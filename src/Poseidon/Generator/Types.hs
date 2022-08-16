@@ -1,8 +1,7 @@
 module Poseidon.Generator.Types where
 
-import           Data.List                  (intercalate)
+import           Data.List      (intercalate)
 import           Poseidon.Janno
-import           SequenceFormats.Eigenstrat (GenoEntry (..))
 
 data IndAdmixpops = IndAdmixpops {
       _indName   :: String
