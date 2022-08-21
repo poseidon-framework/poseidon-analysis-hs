@@ -96,7 +96,7 @@ runAdmixPops (
             GenotypeFormatPlink -> [outName <.> ".fam", outName <.> ".bim", outName <.> ".bed"]
     let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
     let genotypeData = GenotypeDataSpec outFormat outGeno Nothing outSnp Nothing outInd Nothing Nothing
-        pac = newMinimalPackageTemplate outPath "admixpops_package" genotypeData
+        pac = newMinimalPackageTemplate outPath outName genotypeData
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
     logInfo "Compiling individuals"
