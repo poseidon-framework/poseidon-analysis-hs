@@ -272,5 +272,6 @@ parseChunkSize :: OP.Parser Int
 parseChunkSize = OP.option OP.auto (
     OP.long "chunkSize" <>
     OP.value 5000 <>
-    OP.help "The number of SNPs in one chunks"
+    OP.help "The number of SNPs in one chunks" <>
+    OP.showDefault
     )
