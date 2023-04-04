@@ -6,12 +6,10 @@ packages:
 
 extra-deps:
   - git: https://github.com/poseidon-framework/poseidon-hs
-    commit: f64eea67364247eecc527fcf5390453b94d57859
+    commit: daf51661b976797381b023b1d88e6761c8e2e24b
   - table-layout-0.9.1.0
   - data-default-instances-base-0.1.0.1
-  # - sequence-formats-1.6.1
-  - git: https://github.com/stschiff/sequence-formats
-    commit: b10d25d2f2906002c44fc2540402a3c17cd2a474
+  - sequence-formats-1.7.0
   - yaml-pretty-extras-0.0.2.2
   - pipes-ordered-zip-1.2.1
   - co-log-0.4.0.1@sha256:3d4c17f37693c80d1aa2c41669bc3438fac3e89dc5f479e57d79bc3ddc4dfcc5,5087
