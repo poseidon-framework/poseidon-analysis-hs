@@ -15,6 +15,7 @@ import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
 import           Poseidon.EntitiesList      (PoseidonEntity (..),
                                              SignedEntitiesList,
+                                             SelectionLevel2(..),
                                              indInfoConformsToEntitySpec)
 import           Poseidon.SecondaryTypes    (IndividualInfo (..))
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
@@ -33,12 +34,18 @@ type GenomPos = (Chrom, Int)
 
 type GroupDef = (String, SignedEntitiesList)
 
+-- redundant non-exported copy from Poseidon.EntitiesList
+meansIn :: SelectionLevel2 -> Bool
+meansIn ShouldBeIncluded                   = True
+meansIn ShouldBeIncludedWithHigherPriority = True
+meansIn ShouldNotBeIncluded                = False
+
 addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
 addGroupDefs groupDefs indInfoRows = do
     indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
     let additionalGroupNames = do
             (groupName, signedEntityList) <- groupDefs
-            True <- return $ indInfoConformsToEntitySpec signedEntityList indInfo
+            True <- return . meansIn $ indInfoConformsToEntitySpec signedEntityList indInfo
             return groupName
     return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
@@ -46,28 +53,6 @@ parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
 parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, _) -> do
     entities <- obj .: key
     return (unpack key, entities)
-
-customEntitySpecParser :: P.Parser PoseidonEntity
-customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
-    where
-    parsePac   = Pac   <$> P.between (P.char '*') (P.char '*') parseName
-    parseGroup = Group <$> parseName
-    parseInd   = Ind   <$> P.between (P.char '<') (P.char '>') parseName
-    charList :: [Char]
-    charList = ",<>*()"
-    parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
-
-popSpecsNparser :: Int -> P.Parser [PoseidonEntity]
-popSpecsNparser n = sepByNparser n customEntitySpecParser (P.char ',' <* P.spaces)
-
-sepByNparser :: Int -> P.Parser a -> P.Parser sep -> P.Parser [a]
-sepByNparser 0 _ _ = return []
-sepByNparser 1 p _ = fmap (: []) p
-sepByNparser n p s = do
-    x <- p
-    _ <- s
-    xs <- sepByNparser (n - 1) p s
-    return (x:xs)
 
 computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
 computeAlleleCount line indices =
@@ -123,6 +108,19 @@ filterTransitions noTransitions = if noTransitions then
         ((ref == 'G') && (alt == 'A')) ||
         ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
+
+-- a helper function to resolve entities and throw errors if unresolved duplicate individuals are found.
+-- this could also go into poseidon-hs, actually, at least as long as we have this type of resolution algorithm.
+resolveEntityIndicesIO :: (EntitySpec a) => [a] -> [IndividualInfo] -> PoseidonIO [Int]
+resolveEntityIndicesIO entities xs = do
+    let (unresolvedMultiples, singleIndices) = resolveEntityIndices entities xs
+    (when . not . null) unresolvedMultiples $ 
+        logWarning "There are duplicated individuals:"
+        logWarning "In the likely case that this is not intended, specify specify via custom group definitions:"
+        mapM_ (\(_,i@(IndividualInfo n _ _),_) -> logWarning $ show (SimpleInd n) ++ " -> " ++ show (SpecificInd i)) $ concat unresolvedMultiples
+        logWarning "I will proceed including all duplicates"
+    return $ (map fst . concat) unresolvedMultiples ++ singleIndices
+
 
 data XerxesException = PopConfigYamlException FilePath String
     | GroupDefException String
