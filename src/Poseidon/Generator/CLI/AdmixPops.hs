@@ -7,10 +7,10 @@ import           Poseidon.Generator.Utils
 
 import           Control.Exception             (catch, throwIO)
 import           Control.Monad                 (forM, unless, when)
-import           Control.Monad.Reader          (ask)
 import           Data.List
 import           Data.Maybe
 import           Data.Ratio                    ((%))
+import           Data.Time                     (getCurrentTime)
 import           Pipes
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (runSafeT)
@@ -20,7 +20,8 @@ import           Poseidon.Package
 import           Poseidon.Utils
 import           SequenceFormats.Eigenstrat    (EigenstratIndEntry (..),
                                                 writeEigenstrat)
-import           SequenceFormats.Plink         (writePlink)
+import           SequenceFormats.Plink         (eigenstratInd2PlinkFam,
+                                                writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
 
@@ -32,19 +33,19 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixOutFormat               :: GenotypeFormatSpec
     , _admixOutPath                 :: FilePath
     , _forgeOutPacName              :: Maybe String
+    , _forgeOutputPlinkPopMode      :: PlinkPopNameMode
     }
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
-      _readOptVerbose          = False
-    , _readOptStopOnDuplicates = False
+      _readOptStopOnDuplicates = False
     , _readOptIgnoreChecksums  = True
     , _readOptIgnoreGeno       = False
     , _readOptGenoCheck        = True
     }
 
-runAdmixPops :: AdmixPopsOptions -> PoseidonLogIO ()
-runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outPath maybeOutName) = do
+runAdmixPops :: AdmixPopsOptions -> PoseidonIO ()
+runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile marginalizeMissing outFormat outPath maybeOutName outPlinkPopMode) = do
     -- compile individuals
     popsWithFracsFromFile <- case popsWithFracsFile of
         Nothing -> return []
@@ -56,14 +57,14 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
     properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
-    pseudoPackages <- liftIO $ mapM makePseudoPackageFromGenotypeData $ [getGenoDirect x | x@GenoDirect {} <- genoSources]
+    pseudoPackages <- mapM makePseudoPackageFromGenotypeData $ [getGenoDirect x | x@GenoDirect {} <- genoSources]
     logInfo $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
     let allPackages = properPackages ++ pseudoPackages
     -- determine relevant packages and indices
     let popsWithFracs = map (_popFracList . _admixSet) requestedInds
         pops = map (map pop) popsWithFracs
-    relevantPackages <- liftIO $ filterPackagesByPops (concat pops) allPackages
-    popsFracsInds <- liftIO $  mapM (mapM (`extractIndsPerPop` relevantPackages)) popsWithFracs
+    relevantPackages <- filterPackagesByPops (concat pops) allPackages
+    popsFracsInds <- mapM (mapM (`extractIndsPerPop` relevantPackages)) popsWithFracs
     -- create new package --
     let outName = case maybeOutName of -- take basename of outPath, if name is not provided
             Just x  -> x
@@ -81,17 +82,19 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
     logInfo "Compiling individuals"
-    logEnv <- ask
+    logA <- envLogAction
+    inPlinkPopMode <- envInputPlinkMode
+    currentTime <- liftIO getCurrentTime
     liftIO $ catch (
         runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
+            (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
             let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
                 newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
-                    GenotypeFormatPlink      -> writePlink      outG outS outI newIndEntries
+                    GenotypeFormatPlink      -> writePlink      outG outS outI (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
             runEffect $ eigenstratProd >->
-                printSNPCopyProgress >->
+                printSNPCopyProgress logA currentTime >->
                 P.mapM (sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing popsFracsInds) >->
                 outConsumer
         ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
@@ -123,7 +126,7 @@ checkIndsWithAdmixtureSets requestedInds = do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Fractions in " ++ show x ++ " do not to sum to 100%"
 
-filterPackagesByPops :: [String] -> [PoseidonPackage] -> IO [PoseidonPackage]
+filterPackagesByPops :: [String] -> [PoseidonPackage] -> PoseidonIO [PoseidonPackage]
 filterPackagesByPops pops packages = do
     fmap catMaybes . forM packages $ \pac -> do
         inds <- loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)
@@ -132,7 +135,7 @@ filterPackagesByPops pops packages = do
         then return (Just pac)
         else return Nothing
 
-extractIndsPerPop :: PopulationWithFraction -> [PoseidonPackage] -> IO ([Int], Rational)
+extractIndsPerPop :: PopulationWithFraction -> [PoseidonPackage] -> PoseidonIO ([Int], Rational)
 extractIndsPerPop (PopulationWithFraction _pop _frac) relevantPackages = do
     let allPackageNames = map posPacTitle relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages

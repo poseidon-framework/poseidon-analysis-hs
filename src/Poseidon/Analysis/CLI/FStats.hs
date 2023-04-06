@@ -19,6 +19,7 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal,
+                                                 resolveEntityIndicesIO,
                                                  filterTransitions)
 
 import           Control.Exception              (catch, throwIO)
@@ -26,7 +27,6 @@ import           Control.Foldl                  (FoldM (..), impurely, list,
                                                  purely)
 import           Control.Monad                  (forM, forM_, unless)
 import           Control.Monad.IO.Class         (MonadIO, liftIO)
-import           Control.Monad.Reader           (ask)
 import           Data.IORef                     (IORef, modifyIORef', newIORef,
                                                  readIORef, writeIORef)
 import           Data.List                      (intercalate, nub, (\\))
@@ -41,7 +41,6 @@ import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
 import           Poseidon.EntitiesList          (PoseidonEntity (..),
-                                                 conformingEntityIndices,
                                                  findNonExistentEntities,
                                                  indInfoFindRelevantPackageNames,
                                                  underlyingEntity)
@@ -53,8 +52,8 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
 import           Poseidon.Utils                 (PoseidonException (..),
-                                                 PoseidonLogIO, logError,
-                                                 logInfo)
+                                                 PoseidonIO, logError,
+                                                 logInfo, envLogAction, envInputPlinkMode)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -101,7 +100,7 @@ data BlockAccumulator = BlockAccumulator
     }
 
 -- | The main function running the FStats command.
-runFstats :: FstatsOptions -> PoseidonLogIO ()
+runFstats :: FstatsOptions -> PoseidonIO ()
 runFstats opts = do
     -- load packages --
     allPackages <- readPoseidonPackageCollection pacReadOpts (_foBaseDirs opts)
@@ -135,11 +134,12 @@ runFstats opts = do
 
         logInfo "Computing stats:"
         mapM_ (logInfo . summaryPrintFstats) statSpecs
-        logEnv <- ask
+        logA <- envLogAction
+        inPlinkPopMode <- envInputPlinkMode
+        statsFold <- buildStatSpecsFold jointIndInfo statSpecs
         blocks <- liftIO $ catch (
             runSafeT $ do
-                statsFold <- buildStatSpecsFold jointIndInfo statSpecs
-                (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
+                (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
                 let eigenstratProdFiltered =
                         eigenstratProd >->
                         P.filter chromFilter >->
@@ -148,13 +148,20 @@ runFstats opts = do
                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
                 let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-                blocks <- purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-                return blocks
-            ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
+                purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+            ) (throwIO . PoseidonGenotypeExceptionForward)
         let jackknifeEstimates = processBlocks statSpecs blocks
         let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
-        let colSpecs = replicate 11 (column expand def def def)
-            tableH = ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+        let hasAscertainment = or $ do
+                FStatSpec _ _ maybeAsc <- statSpecs
+                case maybeAsc of
+                    Nothing -> return False
+                    _       -> return True
+        let nrCols = if hasAscertainment then 11 else 9
+        let colSpecs = replicate nrCols (column expand def def def)
+            tableH = if hasAscertainment 
+                     then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+                     else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
             tableB = do
                 (fstat, (estimate, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
                 let FStatSpec fType slots maybeAsc = fstat
@@ -163,7 +170,10 @@ runFstats opts = do
                         Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
                         Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
                         _ ->                                            ("n/a",                       "n/a")
-                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                if hasAscertainment then
+                    return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                else 
+                    return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
         liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
         case _foTableOut opts of
             Nothing -> return ()
@@ -192,10 +202,12 @@ type EntityAlleleCountLookup = M.Map PoseidonEntity (Int, Int)
 type EntityAlleleFreqLookup  = M.Map PoseidonEntity (Maybe Double)
 
 -- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
-buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> m (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold indInfo fStatSpecs = do
-    let entityIndicesLookup =
-            M.fromList [(s, conformingEntityIndices [s] indInfo) | s <- collectStatSpecGroups fStatSpecs]
+    entityIndicesLookup <- do
+        let collectedSpecs = collectStatSpecGroups fStatSpecs
+        entityIndices <- sequence [resolveEntityIndicesIO [s] indInfo | s <- collectedSpecs]
+        return . M.fromList . zip collectedSpecs $ entityIndices
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
             case fType of
@@ -212,8 +224,8 @@ buildStatSpecsFold indInfo fStatSpecs = do
             Nothing -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
             Just _  -> return ()
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
-        let alleleCountLookupF = M.map (\indices -> computeAlleleCount genoLine indices) entIndLookup
-            alleleFreqLookupF  = M.map (\indices -> computeAlleleFreq  genoLine indices) entIndLookup
+        let alleleCountLookupF = M.map (computeAlleleCount genoLine) entIndLookup
+            alleleFreqLookupF  = M.map (computeAlleleFreq  genoLine) entIndLookup
         forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
@@ -312,8 +324,7 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
-      _readOptVerbose          = False
-    , _readOptStopOnDuplicates = True
+      _readOptStopOnDuplicates = True
     , _readOptIgnoreChecksums  = True
     , _readOptIgnoreGeno       = False
     , _readOptGenoCheck        = True

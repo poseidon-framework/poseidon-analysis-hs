@@ -9,14 +9,14 @@ import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq,
                                               computeJackknifeAdditive,
                                               computeJackknifeOriginal,
-                                              filterTransitions)
+                                              filterTransitions,
+                                              resolveEntityIndicesIO)
 
 import           Control.Exception           (catch, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
 import           Control.Monad               (forM_, unless, when)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import           Control.Monad.Reader        (ask)
 import qualified Data.ByteString             as B
 import           Data.List                   (intercalate, nub, (\\))
 import qualified Data.Vector                 as V
@@ -31,7 +31,6 @@ import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
 import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
-                                              resolveEntityIndices,
                                               findNonExistentEntities,
                                               indInfoFindRelevantPackageNames,
                                               underlyingEntity)
@@ -129,8 +128,8 @@ runRAS rasOpts = do
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
         -- build the main fold, i.e. the thing that does the actual work with the genotype data and computes the RAS statistics (see buildRasFold)
-        let rasFold = buildRasFold jointIndInfo (_rasMinFreq rasOpts) (_rasMaxFreq rasOpts)
-                (_rasMaxMissingness rasOpts) maybeOutgroup popLefts popRights
+        rasFold <- buildRasFold jointIndInfo (_rasMinFreq rasOpts) (_rasMaxFreq rasOpts)
+            (_rasMaxMissingness rasOpts) maybeOutgroup popLefts popRights
 
         -- build a bed-filter if needed
         let bedFilterFunc = case _rasBedFile rasOpts of

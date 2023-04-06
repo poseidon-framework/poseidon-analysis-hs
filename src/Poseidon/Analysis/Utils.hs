@@ -2,27 +2,25 @@
 
 module Poseidon.Analysis.Utils where
 
-import           Control.Applicative        ((<|>))
 import           Control.Exception          (Exception)
-import           Control.Monad              (forM)
+import           Control.Monad              (forM, when)
 import           Data.Aeson                 ((.:))
 import           Data.Aeson.Types           (Object, Parser)
-import           Data.Char                  (isSpace)
 import           Data.HashMap.Strict        (toList)
 import           Data.Text                  (unpack)
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
-import           Poseidon.EntitiesList      (PoseidonEntity (..),
+import           Poseidon.EntitiesList      (EntitySpec(..),
+                                             PoseidonIndividual(..),
+                                             SelectionLevel2 (..),
                                              SignedEntitiesList,
-                                             SelectionLevel2(..),
-                                             indInfoConformsToEntitySpec)
+                                             resolveEntityIndices)
 import           Poseidon.SecondaryTypes    (IndividualInfo (..))
+import           Poseidon.Utils             (PoseidonIO, logWarning)
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
-import qualified Text.Parsec                as P
-import qualified Text.Parsec.String         as P
 
 -- | A datatype representing the two options for how to run the Block-Jackknife
 data JackknifeMode = JackknifePerN Int
@@ -114,12 +112,12 @@ filterTransitions noTransitions = if noTransitions then
 resolveEntityIndicesIO :: (EntitySpec a) => [a] -> [IndividualInfo] -> PoseidonIO [Int]
 resolveEntityIndicesIO entities xs = do
     let (unresolvedMultiples, singleIndices) = resolveEntityIndices entities xs
-    (when . not . null) unresolvedMultiples $ 
+    (when . not . null) unresolvedMultiples $ do
         logWarning "There are duplicated individuals:"
         logWarning "In the likely case that this is not intended, specify specify via custom group definitions:"
         mapM_ (\(_,i@(IndividualInfo n _ _),_) -> logWarning $ show (SimpleInd n) ++ " -> " ++ show (SpecificInd i)) $ concat unresolvedMultiples
         logWarning "I will proceed including all duplicates"
-    return $ (map fst . concat) unresolvedMultiples ++ singleIndices
+    return $ (map (\(i, _, _) -> i) . concat) unresolvedMultiples ++ singleIndices
 
 
 data XerxesException = PopConfigYamlException FilePath String
