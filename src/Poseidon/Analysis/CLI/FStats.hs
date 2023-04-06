@@ -78,6 +78,7 @@ data FstatsOptions = FstatsOptions
     , _foMaxSnps       :: Maybe Int
     , _foNoTransitions :: Bool
     , _foTableOut      :: Maybe FilePath
+    , _foBlockTableOut :: Maybe FilePath
     }
 
 data BlockData = BlockData
@@ -86,7 +87,7 @@ data BlockData = BlockData
     , blockSiteCount :: Int
     -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
     , blockStatVal   :: [[Double]] -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
-    -- For example, most stats will use two numbers, one for the accumulating statistic, and one for the normalisation. Some use more, like F3, which
+    -- For example, most stats will use two numbers, one for the accumulating statistic, and one for the normalisation. Some use more, like F3
     }
     deriving (Show)
 
@@ -95,7 +96,7 @@ data BlockAccumulator = BlockAccumulator
     , accMaybeEndPos   :: IORef (Maybe GenomPos)
     , accCount         :: IORef Int
     -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
-    , accValues        :: V.Vector (VUM.IOVector Double) -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
+    , accValues        :: V.Vector (VUM.IOVector Double)
     -- the outer vector is boxed and immutable, the inner vector is unboxed and mutable, so that values can be updated as we loop through the data.
     }
 
@@ -157,6 +158,8 @@ runFstats opts = do
                 case maybeAsc of
                     Nothing -> return False
                     _       -> return True
+
+        -- the standard output, pretty-printed to stdout
         let nrCols = if hasAscertainment then 11 else 9
         let colSpecs = replicate nrCols (column expand def def def)
             tableH = if hasAscertainment 
@@ -175,10 +178,28 @@ runFstats opts = do
                 else 
                     return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
         liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+
+        -- optionally output the results into a tab-separated table
         case _foTableOut opts of
             Nothing -> return ()
             Just outFn -> liftIO . withFile outFn WriteMode $
                 \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
+
+        -- optionally output the block data
+        case _foBlockTableOut opts of
+            Nothing -> return ()
+            Just fn -> liftIO . withFile fn WriteMode $ \h -> do
+                let headerLine = if hasAscertainment 
+                     then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+                     else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
+                hPutStrLn h . intercalate "\t" $ ["Left", "Right", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "Norm", "RAS"]
+                forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
+                    forM_ (zip [0..] popRights) $ \(j, popRight) ->
+                        forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) ->
+                            liftIO . hPutStrLn h . intercalate "\t" $ [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
+                                show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
+                                show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]
+
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
