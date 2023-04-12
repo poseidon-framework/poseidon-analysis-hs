@@ -193,17 +193,20 @@ runFstats opts = do
                      then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
                      else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
                 hPutStrLn h . intercalate "\t" $ headerLine
-                forM (zip statSpecs blocks) $ \(statSpec, BlockData startPos endPos nrSites statVals)  -> do
+                forM (zip3 [1..] statSpecs blocks) $ \(i, statSpec, blockData)  -> do
                     let FStatSpec fType slots maybeAsc = statSpec
+                        BlockData startPos endPos nrSites statVals = blockData
                         abcdStr = take 4 (map show slots ++ repeat "")
                         (asc1, asc2) = case maybeAsc of
                             Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
                             Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
                             _ ->                                            ("n/a",                       "n/a")
                     if hasAscertainment then
-                        return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                        return $ [show fType] ++ abcdStr ++ [show i] ++ [show (round nrSites :: Int), asc1, asc2] ++
+                            [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
                     else 
-                        return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                        return $ [show fType] ++ abcdStr ++ [show i] ++ [show (round nrSites :: Int)] ++
+                            [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
 
                 forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
                     forM_ (zip [0..] popRights) $ \(j, popRight) ->
@@ -403,4 +406,21 @@ processBlocks statSpecs blocks = do
                     return $ val' / norm'
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
 
-
+-- outer list: stats, inner list: estimates per block
+processBlocksIndividually :: [FStatSpec] -> [BlockData] -> [[Double]]
+processBlocksIndividually statSpecs blocks = do
+    (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
+    BlockData _ _ _ statVals <- blocks
+    case fType of
+        F3 ->
+            let numerator_value = statVals !! 0
+                numerator_norm = statVals !! 1
+                denominator_value = statVals !! 2
+                denominator_norm = statVals !! 3
+                num_full = numerator_value / numerator_norm
+                denom_full = denominator_value / denominator_norm
+            in  return $ num_full / denom_full
+        _ ->
+            let value = statVals !! 0
+                norm = statVals !! 1
+            in  return value / norm
