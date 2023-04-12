@@ -190,9 +190,21 @@ runFstats opts = do
             Nothing -> return ()
             Just fn -> liftIO . withFile fn WriteMode $ \h -> do
                 let headerLine = if hasAscertainment 
-                     then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
-                     else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
-                hPutStrLn h . intercalate "\t" $ ["Left", "Right", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "Norm", "RAS"]
+                     then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
+                     else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
+                hPutStrLn h . intercalate "\t" $ headerLine
+                forM (zip statSpecs blocks) $ \(statSpec, BlockData startPos endPos nrSites statVals)  -> do
+                    let FStatSpec fType slots maybeAsc = statSpec
+                        abcdStr = take 4 (map show slots ++ repeat "")
+                        (asc1, asc2) = case maybeAsc of
+                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
+                            Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
+                            _ ->                                            ("n/a",                       "n/a")
+                    if hasAscertainment then
+                        return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                    else 
+                        return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+
                 forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
                     forM_ (zip [0..] popRights) $ \(j, popRight) ->
                         forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) ->
