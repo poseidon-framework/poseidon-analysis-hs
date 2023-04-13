@@ -24,10 +24,9 @@ import           Poseidon.CLI.OptparseApplicativeParsers
 import           Poseidon.PoseidonVersion                (showPoseidonVersion,
                                                           validPoseidonVersions)
 import           Poseidon.Utils                          (LogMode (..),
+                                                          PlinkPopNameMode (..),
                                                           PoseidonException (..),
-                                                          PoseidonIO,
-                                                          PlinkPopNameMode(..),
-                                                          logError,
+                                                          PoseidonIO, logError,
                                                           renderPoseidonException,
                                                           usePoseidonLogger)
 import           SequenceFormats.Utils                   (Chrom (..))
