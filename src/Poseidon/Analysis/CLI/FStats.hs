@@ -193,28 +193,21 @@ runFstats opts = do
                      then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
                      else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
                 hPutStrLn h . intercalate "\t" $ headerLine
-                forM (zip3 [1..] statSpecs blocks) $ \(i, statSpec, blockData)  -> do
-                    let FStatSpec fType slots maybeAsc = statSpec
-                        BlockData startPos endPos nrSites statVals = blockData
-                        abcdStr = take 4 (map show slots ++ repeat "")
-                        (asc1, asc2) = case maybeAsc of
-                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
-                            Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
-                            _ ->                                            ("n/a",                       "n/a")
-                    if hasAscertainment then
-                        return $ [show fType] ++ abcdStr ++ [show i] ++ [show (round nrSites :: Int), asc1, asc2] ++
-                            [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
-                    else 
-                        return $ [show fType] ++ abcdStr ++ [show i] ++ [show (round nrSites :: Int)] ++
-                            [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
-
-                forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
-                    forM_ (zip [0..] popRights) $ \(j, popRight) ->
-                        forM_ (zip [(0 :: Int)..] blockData) $ \(k, block) ->
-                            liftIO . hPutStrLn h . intercalate "\t" $ [show popLeft, show popRight, show k, show (fst . blockStartPos $ block),
-                                show (snd . blockStartPos $ block), show (fst . blockEndPos $ block),
-                                show (snd . blockEndPos $ block), show (blockSiteCount block !! i), show ((blockVals block !! i) !! j)]
-
+                forM_ (zip [(1 :: Int)..] blocks) $ \(i, block)  -> do
+                    let BlockData startPos endPos nrSites _ = block
+                        blockEstimates = processBlockIndividually statSpecs block
+                    forM_ (zip statSpecs blockEstimates) $ \(statSpec, blockEstimate) -> do
+                        let FStatSpec fType slots maybeAsc = statSpec
+                            abcdStr = take 4 (map show slots ++ repeat "")
+                            (asc1, asc2) = case maybeAsc of
+                                Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
+                                Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
+                                _ ->                                            ("n/a",                       "n/a")
+                            posInfo = [show (fst startPos), show (snd startPos), show (fst endPos), show (snd endPos)]
+                        if hasAscertainment then
+                            hPutStrLn h . intercalate "\t" $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, asc1, asc2, show blockEstimate]
+                        else 
+                            hPutStrLn h . intercalate "\t"  $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, show blockEstimate]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
@@ -407,10 +400,9 @@ processBlocks statSpecs blocks = do
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
 
 -- outer list: stats, inner list: estimates per block
-processBlocksIndividually :: [FStatSpec] -> [BlockData] -> [[Double]]
-processBlocksIndividually statSpecs blocks = do
-    (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
-    BlockData _ _ _ statVals <- blocks
+processBlockIndividually :: [FStatSpec] -> BlockData -> [Double]
+processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
+    (FStatSpec fType _ _, statVals) <- zip statSpecs allStatVals
     case fType of
         F3 ->
             let numerator_value = statVals !! 0
@@ -423,4 +415,4 @@ processBlocksIndividually statSpecs blocks = do
         _ ->
             let value = statVals !! 0
                 norm = statVals !! 1
-            in  return value / norm
+            in  return $ value / norm

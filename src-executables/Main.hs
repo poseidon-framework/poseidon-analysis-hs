@@ -116,6 +116,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseMaxSnps
                                 <*> parseNoTransitions
                                 <*> parseTableOutFile
+                                <*> parseBlockTableFile
 
 parseJackknife :: OP.Parser JackknifeMode
 parseJackknife = OP.option (OP.eitherReader readJackknifeString) (OP.long "jackknife" <> OP.short 'j' <>
