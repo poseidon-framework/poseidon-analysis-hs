@@ -36,7 +36,7 @@ import qualified Data.Vector.Unboxed            as VU
 import qualified Data.Vector.Unboxed.Mutable    as VUM
 -- import           Debug.Trace                 (trace)
 import           Lens.Family2                   (view)
-import           Pipes                          (cat, (>->))
+import           Pipes                          (cat, (>->), for, yield)
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
@@ -53,12 +53,13 @@ import           Poseidon.Package               (PackageReadOptions (..),
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, logError,
-                                                 logInfo, envLogAction, envInputPlinkMode)
+                                                 logInfo, envLogAction, envInputPlinkMode,
+                                                 logWithEnv)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
 import           System.Exit                    (exitFailure)
-import           System.IO                      (IOMode (..), hPutStrLn, stderr,
+import           System.IO                      (IOMode (..), hPutStrLn,
                                                  withFile)
 import           Text.Layout.Table              (asciiRoundS, column, def,
                                                  expand, rowsG, tableString,
@@ -149,7 +150,7 @@ runFstats opts = do
                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
                 let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-                purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+                purely P.fold list (summaryStatsProd >-> printBlockInfoPipe logA)
             ) (throwIO . PoseidonGenotypeExceptionForward)
         let jackknifeEstimates = processBlocks statSpecs blocks
         let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
@@ -216,9 +217,11 @@ runFstats opts = do
     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
         chrom1 == chrom2
     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
-    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
-        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
-
+    printBlockInfoPipe logA = for cat $ \block -> do
+        logWithEnv logA . logInfo $ "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+            show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+        yield block
+    
 summaryPrintFstats :: FStatSpec -> String
 summaryPrintFstats (FStatSpec fType slots maybeAsc) =
     let ascString = case maybeAsc of
