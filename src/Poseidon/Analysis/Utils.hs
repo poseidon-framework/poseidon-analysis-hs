@@ -11,8 +11,8 @@ import           Data.Text                  (unpack)
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
-import           Poseidon.EntitiesList      (EntitySpec(..),
-                                             PoseidonIndividual(..),
+import           Poseidon.EntitiesList      (EntitySpec (..),
+                                             PoseidonIndividual (..),
                                              SelectionLevel2 (..),
                                              SignedEntitiesList,
                                              resolveEntityIndices)

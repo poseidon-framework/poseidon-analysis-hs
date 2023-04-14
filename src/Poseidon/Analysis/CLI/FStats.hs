@@ -19,8 +19,8 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal,
-                                                 resolveEntityIndicesIO,
-                                                 filterTransitions)
+                                                 filterTransitions,
+                                                 resolveEntityIndicesIO)
 
 import           Control.Exception              (catch, throwIO)
 import           Control.Foldl                  (FoldM (..), impurely, list,
@@ -163,7 +163,7 @@ runFstats opts = do
         -- the standard output, pretty-printed to stdout
         let nrCols = if hasAscertainment then 11 else 9
         let colSpecs = replicate nrCols (column expand def def def)
-            tableH = if hasAscertainment 
+            tableH = if hasAscertainment
                      then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
                      else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
             tableB = do
@@ -176,7 +176,7 @@ runFstats opts = do
                         _ ->                                            ("n/a",                       "n/a")
                 if hasAscertainment then
                     return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
-                else 
+                else
                     return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
         liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
 
