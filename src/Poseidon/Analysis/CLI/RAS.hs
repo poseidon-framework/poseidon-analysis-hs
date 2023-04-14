@@ -159,7 +159,7 @@ runRAS rasOpts = do
         -- outputting and computing results
         logInfo "collating results"
 
-        -- Output for the standard output (a simple table with RAS estimates, using the pretty-printing Text.Table.Layout package )
+        -- Output for the standard output (a simple table with RAS estimates)
         liftIO . putStrLn . intercalate "\t" $ ["Left", "Right", "Norm", "RAS", "StdErr"]
         forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
             forM_ (zip [0..] popRights) $ \(j, popRight) -> do

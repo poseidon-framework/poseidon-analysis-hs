@@ -5,9 +5,9 @@ module Poseidon.Analysis.Utils where
 import           Control.Exception          (Exception)
 import           Control.Monad              (forM, when)
 import           Data.Aeson                 ((.:))
+import           Data.Aeson.Key             (toString)
+import           Data.Aeson.KeyMap          (toList)
 import           Data.Aeson.Types           (Object, Parser)
-import           Data.HashMap.Strict        (toList)
-import           Data.Text                  (unpack)
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
@@ -50,7 +50,7 @@ addGroupDefs groupDefs indInfoRows = do
 parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
 parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, _) -> do
     entities <- obj .: key
-    return (unpack key, entities)
+    return (toString key, entities)
 
 computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
 computeAlleleCount line indices =

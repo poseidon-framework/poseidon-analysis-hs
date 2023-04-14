@@ -1,4 +1,4 @@
-resolver: lts-18.28
+resolver: lts-20.17
 
 packages:
 - .
@@ -6,12 +6,14 @@ packages:
 
 extra-deps:
   - git: https://github.com/poseidon-framework/poseidon-hs
-    commit: daf51661b976797381b023b1d88e6761c8e2e24b
+    commit: d53d2f0221bbe04203f0c95468600b81bbca0760
   - table-layout-0.9.1.0
   - data-default-instances-base-0.1.0.1
   - sequence-formats-1.7.0
-  - yaml-pretty-extras-0.0.2.2
   - pipes-ordered-zip-1.2.1
-  - co-log-0.4.0.1@sha256:3d4c17f37693c80d1aa2c41669bc3438fac3e89dc5f479e57d79bc3ddc4dfcc5,5087
-  - ansi-terminal-0.10.3@sha256:e2fbcef5f980dc234c7ad8e2fa433b0e8109132c9e643bc40ea5608cd5697797,3226
-  - parsec3-numbers-0.1.0@sha256:2f32295f9f4023f7f97da851549aaaf5e72866e98bf016a1ac3c6e8715bbaf8a,685
+  - co-log-0.5.0.0
+  - ansi-terminal-0.10.3
+  - parsec3-numbers-0.1.0
+  - chronos-1.1.5
+  - typerep-map-0.5.0.0
+allow-newer: true

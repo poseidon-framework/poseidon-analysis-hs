@@ -74,9 +74,9 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     logInfo $ "Writing to directory (will be created if missing): " ++ outPath
     liftIO $ createDirectoryIfMissing True outPath
     -- compile genotype data structure
-    let [outInd, outSnp, outGeno] = case outFormat of
-            GenotypeFormatEigenstrat -> [outName <.> ".ind", outName <.> ".snp", outName <.> ".geno"]
-            GenotypeFormatPlink -> [outName <.> ".fam", outName <.> ".bim", outName <.> ".bed"]
+    let (outInd, outSnp, outGeno) = case outFormat of
+            GenotypeFormatEigenstrat -> (outName <.> ".ind", outName <.> ".snp", outName <.> ".geno")
+            GenotypeFormatPlink -> (outName <.> ".fam", outName <.> ".bim", outName <.> ".bed")
     let genotypeData = GenotypeDataSpec outFormat outGeno Nothing outSnp Nothing outInd Nothing Nothing
         pac = newMinimalPackageTemplate outPath "admixpops_package" genotypeData
     liftIO $ writePoseidonPackage pac
@@ -88,7 +88,7 @@ runAdmixPops (AdmixPopsOptions genoSources popsWithFracsDirect popsWithFracsFile
     liftIO $ catch (
         runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
-            let [outG, outS, outI] = map (outPath </>) [outGeno, outSnp, outInd]
+            let (outG, outS, outI) = (outPath </> outGeno, outPath </> outSnp, outPath </> outInd)
                 newIndEntries = map (\x -> EigenstratIndEntry (_admixInd x) Unknown (_admixUnit x)) requestedInds
             let outConsumer = case outFormat of
                     GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries

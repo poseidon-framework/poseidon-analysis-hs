@@ -36,7 +36,7 @@ import qualified Data.Vector.Unboxed            as VU
 import qualified Data.Vector.Unboxed.Mutable    as VUM
 -- import           Debug.Trace                 (trace)
 import           Lens.Family2                   (view)
-import           Pipes                          (cat, (>->))
+import           Pipes                          (cat, for, yield, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
@@ -54,12 +54,12 @@ import           Poseidon.SecondaryTypes        (IndividualInfo (..))
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, envInputPlinkMode,
                                                  envLogAction, logError,
-                                                 logInfo)
+                                                 logInfo, logWithEnv)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
 import           System.Exit                    (exitFailure)
-import           System.IO                      (IOMode (..), hPutStrLn, stderr,
+import           System.IO                      (IOMode (..), hPutStrLn,
                                                  withFile)
 import           Text.Layout.Table              (asciiRoundS, column, def,
                                                  expand, rowsG, tableString,
@@ -79,6 +79,7 @@ data FstatsOptions = FstatsOptions
     , _foMaxSnps       :: Maybe Int
     , _foNoTransitions :: Bool
     , _foTableOut      :: Maybe FilePath
+    , _foBlockTableOut :: Maybe FilePath
     }
 
 data BlockData = BlockData
@@ -87,7 +88,7 @@ data BlockData = BlockData
     , blockSiteCount :: Int
     -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
     , blockStatVal   :: [[Double]] -- multiple per-block-accumulators per statistics, can be used however the specific statistic needs to.
-    -- For example, most stats will use two numbers, one for the accumulating statistic, and one for the normalisation. Some use more, like F3, which
+    -- For example, most stats will use two numbers, one for the accumulating statistic, and one for the normalisation. Some use more, like F3
     }
     deriving (Show)
 
@@ -96,7 +97,7 @@ data BlockAccumulator = BlockAccumulator
     , accMaybeEndPos   :: IORef (Maybe GenomPos)
     , accCount         :: IORef Int
     -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
-    , accValues        :: V.Vector (VUM.IOVector Double) -- this is the key value accumulator: for each statistic there is a list of accumulators if needed, see above.
+    , accValues        :: V.Vector (VUM.IOVector Double)
     -- the outer vector is boxed and immutable, the inner vector is unboxed and mutable, so that values can be updated as we loop through the data.
     }
 
@@ -149,7 +150,7 @@ runFstats opts = do
                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
                 let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-                purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
+                purely P.fold list (summaryStatsProd >-> printBlockInfoPipe logA)
             ) (throwIO . PoseidonGenotypeExceptionForward)
         let jackknifeEstimates = processBlocks statSpecs blocks
         let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
@@ -158,6 +159,8 @@ runFstats opts = do
                 case maybeAsc of
                     Nothing -> return False
                     _       -> return True
+
+        -- the standard output, pretty-printed to stdout
         let nrCols = if hasAscertainment then 11 else 9
         let colSpecs = replicate nrCols (column expand def def def)
             tableH = if hasAscertainment
@@ -176,10 +179,36 @@ runFstats opts = do
                 else
                     return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
         liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+
+        -- optionally output the results into a tab-separated table
         case _foTableOut opts of
             Nothing -> return ()
             Just outFn -> liftIO . withFile outFn WriteMode $
                 \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
+
+        -- optionally output the block data
+        case _foBlockTableOut opts of
+            Nothing -> return ()
+            Just fn -> liftIO . withFile fn WriteMode $ \h -> do
+                let headerLine = if hasAscertainment
+                     then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
+                     else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
+                hPutStrLn h . intercalate "\t" $ headerLine
+                forM_ (zip [(1 :: Int)..] blocks) $ \(i, block)  -> do
+                    let BlockData startPos endPos nrSites _ = block
+                        blockEstimates = processBlockIndividually statSpecs block
+                    forM_ (zip statSpecs blockEstimates) $ \(statSpec, blockEstimate) -> do
+                        let FStatSpec fType slots maybeAsc = statSpec
+                            abcdStr = take 4 (map show slots ++ repeat "")
+                            (asc1, asc2) = case maybeAsc of
+                                Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
+                                Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
+                                _ ->                                            ("n/a",                       "n/a")
+                            posInfo = [show (fst startPos), show (snd startPos), show (fst endPos), show (snd endPos)]
+                        if hasAscertainment then
+                            hPutStrLn h . intercalate "\t" $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, asc1, asc2, show blockEstimate]
+                        else
+                            hPutStrLn h . intercalate "\t"  $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, show blockEstimate]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
@@ -188,8 +217,10 @@ runFstats opts = do
     sameChrom (EigenstratSnpEntry chrom1 _ _ _ _ _, _) (EigenstratSnpEntry chrom2 _ _ _ _ _, _) =
         chrom1 == chrom2
     chunkEigenstratByNrSnps chunkSize = view (chunksOf chunkSize)
-    showBlockLogOutput block = "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
-        show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+    printBlockInfoPipe logA = for cat $ \block -> do
+        logWithEnv logA . logInfo $ "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
+            show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
+        yield block
 
 summaryPrintFstats :: FStatSpec -> String
 summaryPrintFstats (FStatSpec fType slots maybeAsc) =
@@ -371,4 +402,20 @@ processBlocks statSpecs blocks = do
                     return $ val' / norm'
             in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
 
-
+-- outer list: stats, inner list: estimates per block
+processBlockIndividually :: [FStatSpec] -> BlockData -> [Double]
+processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
+    (FStatSpec fType _ _, statVals) <- zip statSpecs allStatVals
+    case fType of
+        F3 ->
+            let numerator_value = statVals !! 0
+                numerator_norm = statVals !! 1
+                denominator_value = statVals !! 2
+                denominator_norm = statVals !! 3
+                num_full = numerator_value / numerator_norm
+                denom_full = denominator_value / denominator_norm
+            in  return $ num_full / denom_full
+        _ ->
+            let value = statVals !! 0
+                norm = statVals !! 1
+            in  return $ value / norm
