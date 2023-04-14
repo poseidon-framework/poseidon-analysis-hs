@@ -1,3 +1,4 @@
+- 0.3.1.0: Switched to poseidon-hs v1.1.11.0, which includes better Plink input options.
 - 0.3.0.0: A number of changes when integrating paagen into xerxes: 
 	- Switched to GHC v8.10.7
 	- Ran stylish-haskell and enabled a GitHub action that checks if new code follows its default guidelines

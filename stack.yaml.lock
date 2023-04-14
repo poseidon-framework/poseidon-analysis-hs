@@ -5,79 +5,75 @@
 
 packages:
 - completed:
+    commit: daf51661b976797381b023b1d88e6761c8e2e24b
+    git: https://github.com/poseidon-framework/poseidon-hs
     name: poseidon-hs
-    version: 1.1.1.2
-    git: https://github.com/poseidon-framework/poseidon-hs
     pantry-tree:
-      size: 14765
-      sha256: dcfc7ba9811d9678499ef562ed438e5e90ba2014ad4325eb1bce1636b3d634d5
-    commit: f64eea67364247eecc527fcf5390453b94d57859
+      sha256: 0c6b534f26e5f5cb1063762904b1d69b533f225310a7d2a2bc8fc894092b964c
+      size: 20618
+    version: 1.1.11.0
   original:
+    commit: daf51661b976797381b023b1d88e6761c8e2e24b
     git: https://github.com/poseidon-framework/poseidon-hs
-    commit: f64eea67364247eecc527fcf5390453b94d57859
 - completed:
     hackage: table-layout-0.9.1.0@sha256:172b8b3a06c992839a781b77e42bbce689ba87d92c260acb61d187f7e6aad7f2,7154
     pantry-tree:
-      size: 2216
       sha256: d3b20ca5e8342d24fa7cfb5e3d39853a14f572f0a95b7bc9d0fea82baa0a4c10
+      size: 2216
   original:
     hackage: table-layout-0.9.1.0
 - completed:
     hackage: data-default-instances-base-0.1.0.1@sha256:985a13d7103e45a65f06f277b735ef025636014f0d29dd6de998bc7628e09be9,509
     pantry-tree:
-      size: 242
       sha256: 92969ddf22c5f54123fb2bcfbe5917b59a7e6382473b0306bcd8fb7990d9aa1a
+      size: 242
   original:
     hackage: data-default-instances-base-0.1.0.1
 - completed:
-    name: sequence-formats
-    version: 1.6.6.1
-    git: https://github.com/stschiff/sequence-formats
+    hackage: sequence-formats-1.7.0@sha256:d6f55f40e54a60edc718d44713014a1dd537bf7f5aed3e625c5947e78c97f1f0,2569
     pantry-tree:
-      size: 2686
-      sha256: f5fc28ebf26db01692f5bb02d40f38c500df68d7e9441db7ccedf1048634df73
-    commit: b10d25d2f2906002c44fc2540402a3c17cd2a474
+      sha256: 67fbb5d136821bc3ce720db021106138912c45c2c4c95b44792f3048f582e96c
+      size: 2534
   original:
-    git: https://github.com/stschiff/sequence-formats
-    commit: b10d25d2f2906002c44fc2540402a3c17cd2a474
+    hackage: sequence-formats-1.7.0
 - completed:
     hackage: yaml-pretty-extras-0.0.2.2@sha256:9e7fefdf4146e84ad11856daa990f5a1b8d1ac2c6dbc0a76913f67480547d4d0,2728
     pantry-tree:
-      size: 386
       sha256: edd7d1c004e05008b7c7ddb24845d6d769c508a09906623c65d5914e4ee2dbdf
+      size: 386
   original:
     hackage: yaml-pretty-extras-0.0.2.2
 - completed:
     hackage: pipes-ordered-zip-1.2.1@sha256:1bece0cde4315987da28b6a588dd3345dda8f61bb6894e4e4c9c3cd3a4646746,1453
     pantry-tree:
-      size: 446
       sha256: 099f71b0cecdaee9feae0bbf165491c57082ee259f7b5a593f96cfbccd36ba49
+      size: 446
   original:
     hackage: pipes-ordered-zip-1.2.1
 - completed:
     hackage: co-log-0.4.0.1@sha256:3d4c17f37693c80d1aa2c41669bc3438fac3e89dc5f479e57d79bc3ddc4dfcc5,5087
     pantry-tree:
-      size: 1126
       sha256: e73165ff8f744709428e2e87984c9d60ca1cec43d8455c413181c7c466e7497c
+      size: 1126
   original:
     hackage: co-log-0.4.0.1@sha256:3d4c17f37693c80d1aa2c41669bc3438fac3e89dc5f479e57d79bc3ddc4dfcc5,5087
 - completed:
     hackage: ansi-terminal-0.10.3@sha256:e2fbcef5f980dc234c7ad8e2fa433b0e8109132c9e643bc40ea5608cd5697797,3226
     pantry-tree:
-      size: 1461
       sha256: 02f05d52be3ffcf36c78876629cbab80b63420672685371aea4fd10e1c4aabb6
+      size: 1461
   original:
     hackage: ansi-terminal-0.10.3@sha256:e2fbcef5f980dc234c7ad8e2fa433b0e8109132c9e643bc40ea5608cd5697797,3226
 - completed:
     hackage: parsec3-numbers-0.1.0@sha256:2f32295f9f4023f7f97da851549aaaf5e72866e98bf016a1ac3c6e8715bbaf8a,685
     pantry-tree:
-      size: 264
       sha256: a3d23f56cc2a9d17ed24ac5119a7b2102d40c0afeed5271f6b41b7597f181df0
+      size: 264
   original:
     hackage: parsec3-numbers-0.1.0@sha256:2f32295f9f4023f7f97da851549aaaf5e72866e98bf016a1ac3c6e8715bbaf8a,685
 snapshots:
 - completed:
+    sha256: 428ec8d5ce932190d3cbe266b9eb3c175cd81e984babf876b64019e2cbe4ea68
     size: 590100
     url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/28.yaml
-    sha256: 428ec8d5ce932190d3cbe266b9eb3c175cd81e984babf876b64019e2cbe4ea68
   original: lts-18.28
