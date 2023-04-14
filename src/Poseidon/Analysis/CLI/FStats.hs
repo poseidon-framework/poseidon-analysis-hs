@@ -36,7 +36,7 @@ import qualified Data.Vector.Unboxed            as VU
 import qualified Data.Vector.Unboxed.Mutable    as VUM
 -- import           Debug.Trace                 (trace)
 import           Lens.Family2                   (view)
-import           Pipes                          (cat, (>->), for, yield)
+import           Pipes                          (cat, for, yield, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
@@ -52,9 +52,9 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes        (IndividualInfo (..))
 import           Poseidon.Utils                 (PoseidonException (..),
-                                                 PoseidonIO, logError,
-                                                 logInfo, envLogAction, envInputPlinkMode,
-                                                 logWithEnv)
+                                                 PoseidonIO, envInputPlinkMode,
+                                                 envLogAction, logError,
+                                                 logInfo, logWithEnv)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -190,7 +190,7 @@ runFstats opts = do
         case _foBlockTableOut opts of
             Nothing -> return ()
             Just fn -> liftIO . withFile fn WriteMode $ \h -> do
-                let headerLine = if hasAscertainment 
+                let headerLine = if hasAscertainment
                      then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
                      else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
                 hPutStrLn h . intercalate "\t" $ headerLine
@@ -207,7 +207,7 @@ runFstats opts = do
                             posInfo = [show (fst startPos), show (snd startPos), show (fst endPos), show (snd endPos)]
                         if hasAscertainment then
                             hPutStrLn h . intercalate "\t" $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, asc1, asc2, show blockEstimate]
-                        else 
+                        else
                             hPutStrLn h . intercalate "\t"  $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, show blockEstimate]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
@@ -221,7 +221,7 @@ runFstats opts = do
         logWithEnv logA . logInfo $ "computing chunk range " ++ show (blockStartPos block) ++ " - " ++
             show (blockEndPos block) ++ ", size " ++ (show . blockSiteCount) block ++ " SNPs"
         yield block
-    
+
 summaryPrintFstats :: FStatSpec -> String
 summaryPrintFstats (FStatSpec fType slots maybeAsc) =
     let ascString = case maybeAsc of
