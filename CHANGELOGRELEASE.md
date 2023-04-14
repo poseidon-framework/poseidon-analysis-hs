@@ -1,3 +1,10 @@
+# V0.3.2.0: Poseidon 2.7.0 and fstats-block-output
+
+- This release updates the underlying Poseidon library, which makes this version now compatible with newest Poseidon packages of version 2.7.0.
+- We also added a new feature to `xerxes fstats` to output statistics per Jackknife-block.
+- The output was also prettified using our central log-functionality.
+- The GHC compiler which this package depends upon has also been updated to a much newer release than the version before. In particular, this new compiler runs on the newest Mac M2 Macbook-Pros (which the previous ones did not)
+
 # V0.3.0.0: Added a first implementation of admixpops
 
 For this release we integrated the very experimental artificial ancestry generation subcommand `admixpops` into xerxes (formerly a component of a tool called [paagen](https://github.com/nevrome/paagen)). We also added some innovations from trident for logging, error handling and code maintenance.
