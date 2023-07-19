@@ -1,3 +1,4 @@
+- 0.3.3.0: Switched to poseidon-hs v1.2.1.0, which supports Poseidon v2.7.1.
 - 0.3.2.0: Added feature to output per-block statistics in Fstats.
 - 0.3.1.0: Switched to poseidon-hs v1.1.11.0, which includes better Plink input options.
 - 0.3.0.0: A number of changes when integrating paagen into xerxes: 

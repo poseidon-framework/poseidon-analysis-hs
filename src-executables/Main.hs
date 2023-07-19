@@ -26,7 +26,8 @@ import           Poseidon.PoseidonVersion                (showPoseidonVersion,
 import           Poseidon.Utils                          (LogMode (..),
                                                           PlinkPopNameMode (..),
                                                           PoseidonException (..),
-                                                          PoseidonIO, logError,
+                                                          PoseidonIO, TestMode,
+                                                          logError,
                                                           renderPoseidonException,
                                                           usePoseidonLogger)
 import           SequenceFormats.Utils                   (Chrom (..))
@@ -36,6 +37,7 @@ import           Text.Read                               (readEither)
 
 data Options = Options {
     _logMode    :: LogMode
+  , _testMode   :: TestMode
   , _errLength  :: ErrorLength
   , _plinkMode  :: PlinkPopNameMode
   , _subcommand :: Subcommand
@@ -50,12 +52,12 @@ main :: IO ()
 main = do
     hPutStrLn stderr renderVersion
     hPutStrLn stderr ""
-    (Options logMode errLength plinkMode subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
-    catch (usePoseidonLogger logMode plinkMode $ runCmd subcommand) (handler logMode errLength plinkMode)
+    (Options logMode testMode errLength plinkMode subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
+    catch (usePoseidonLogger logMode testMode plinkMode $ runCmd subcommand) (handler logMode testMode errLength plinkMode)
     where
-        handler :: LogMode -> ErrorLength -> PlinkPopNameMode -> PoseidonException -> IO ()
-        handler l len pm e = do
-            usePoseidonLogger l pm $ logError $ truncateErr len $ renderPoseidonException e
+        handler :: LogMode -> TestMode -> ErrorLength -> PlinkPopNameMode -> PoseidonException -> IO ()
+        handler l t len pm e = do
+            usePoseidonLogger l t pm $ logError $ truncateErr len $ renderPoseidonException e
             exitFailure
         truncateErr :: ErrorLength -> String -> String
         truncateErr CharInf         s = s
@@ -71,7 +73,12 @@ runCmd o = case o of
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*>
-        (Options <$> parseLogMode <*> parseErrorLength <*> parseInputPlinkPopMode <*> subcommandParser)) (
+        (Options <$> parseLogMode
+                 <*> parseTestMode
+                 <*> parseErrorLength
+                 <*> parseInputPlinkPopMode
+                 <*> subcommandParser)
+        ) (
     OP.briefDesc <>
     OP.progDesc "xerxes is an analysis tool for Poseidon packages. \
                 \Report issues here: \
