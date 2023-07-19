@@ -21,7 +21,8 @@ import           Poseidon.Janno
 import           Poseidon.Package
 import           Poseidon.Utils
 import           SequenceFormats.Eigenstrat
-import           SequenceFormats.Plink         (writePlink, eigenstratInd2PlinkFam)
+import           SequenceFormats.Plink         (eigenstratInd2PlinkFam,
+                                                writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
 
