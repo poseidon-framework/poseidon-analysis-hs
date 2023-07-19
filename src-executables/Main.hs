@@ -12,7 +12,7 @@ import           Poseidon.Generator.CLI.AdmixPops        (AdmixPopsMethodSetting
                                                           AdmixPopsOptions (..),
                                                           runAdmixPops)
 import           Poseidon.Generator.Parsers              (readIndWithAdmixtureSetString)
-import           Poseidon.Generator.Types                (InIndAdmixpops)
+import           Poseidon.Generator.Types                (RequestedInd)
 
 import           Control.Applicative                     ((<|>))
 import           Control.Exception                       (catch)
@@ -243,7 +243,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseMaybeOutPackageName
                                       <*> parseOutputPlinkPopMode
 
-parseIndWithAdmixtureSetDirect :: OP.Parser [InIndAdmixpops]
+parseIndWithAdmixtureSetDirect :: OP.Parser [RequestedInd]
 parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (
     OP.long "admixString" <>
     OP.short 'a' <>

@@ -29,13 +29,14 @@ import           System.FilePath               (takeBaseName, (<.>), (</>))
 data AdmixPopsMethodSettings =
     PerSNP {
         _admixMarginalizeMissing :: Bool
-    } | InChunks {
+    } |
+    InChunks {
         _admixChunkSize :: Int
     }
 
 data AdmixPopsOptions = AdmixPopsOptions {
       _admixGenoSources             :: [GenoDataSource]
-    , _admixIndWithAdmixtureSet     :: [InIndAdmixpops]
+    , _admixIndWithAdmixtureSet     :: [RequestedInd]
     , _admixIndWithAdmixtureSetFile :: Maybe FilePath
     , _admixMethodSettings          :: AdmixPopsMethodSettings
     , _admixOutFormat               :: GenotypeFormatSpec
@@ -130,18 +131,18 @@ runAdmixPops (
     where
         chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
 
-checkIndsWithAdmixtureSets :: [InIndAdmixpops] -> IO ()
+checkIndsWithAdmixtureSets :: [RequestedInd] -> IO ()
 checkIndsWithAdmixtureSets requestedInds = do
     checkDuplicateIndNames requestedInds
     mapM_ checkPopFracList requestedInds
     where
-        checkDuplicateIndNames :: [InIndAdmixpops] -> IO ()
+        checkDuplicateIndNames :: [RequestedInd] -> IO ()
         checkDuplicateIndNames xs =
             let individualsGrouped = filter (\x -> length x > 1) $ group $ sort $ map _inIndName xs
             in unless (null individualsGrouped) $ do
                 throwIO $ PoseidonGeneratorCLIParsingException $
                     "Duplicate individual names: " ++ intercalate "," (nub $ concat individualsGrouped)
-        checkPopFracList :: InIndAdmixpops -> IO ()
+        checkPopFracList :: RequestedInd -> IO ()
         checkPopFracList x = do
             let xs = _inPopSet x
                 fracs = map _inPopFrac xs
@@ -158,18 +159,18 @@ filterPackagesByPops pops packages = do
         then return (Just pac)
         else return Nothing
 
-gatherInfoForInd :: InIndAdmixpops -> [PoseidonPackage] -> PoseidonIO IndAdmixpops
-gatherInfoForInd (InIndAdmixpops name_ group_ set_) pacs = do
+gatherInfoForInd :: RequestedInd -> [PoseidonPackage] -> PoseidonIO IndConcrete
+gatherInfoForInd (RequestedInd name_ group_ set_) pacs = do
     inds <- mapM (`extractIndsPerPop` pacs) set_
-    return $ IndAdmixpops name_ group_ inds
+    return $ IndConcrete name_ group_ inds
 
-extractIndsPerPop :: InPopAdmixpops -> [PoseidonPackage] -> PoseidonIO PopAdmixpops
-extractIndsPerPop (InPopAdmixpops pop_ frac_) relevantPackages = do
+extractIndsPerPop :: PopFrac -> [PoseidonPackage] -> PoseidonIO PopFracConcrete
+extractIndsPerPop (PopFrac pop_ frac_) relevantPackages = do
     let allPackageNames = map posPacTitle relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages
     let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == pop_
         indNames = map extractIndName $ filter filterFunc (zipGroup allPackageNames allIndEntries)
         indIDs = map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries)
-    return (PopAdmixpops pop_ frac_ (zip indNames indIDs))
+    return (PopFracConcrete pop_ frac_ (zip indNames indIDs))
     where
         extractIndName (_,_,EigenstratIndEntry x _ _) = x

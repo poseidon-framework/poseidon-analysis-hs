@@ -16,7 +16,7 @@ import           SequenceFormats.Eigenstrat
 
 samplePerChunk :: (MonadIO m) =>
        LogA
-    -> [IndAdmixpops]
+    -> [IndConcrete]
     -> Producer (EigenstratSnpEntry, GenoLine) m r
     -> Producer (EigenstratSnpEntry, GenoLine) m r
 samplePerChunk logEnv inds prod = do
@@ -28,7 +28,7 @@ samplePerChunk logEnv inds prod = do
         let newGenoLine = V.fromList $ [genoLine V.! i | i <- sampledInds]
         yield (snpEntry, newGenoLine)
 
-sampleInIndForChunk :: (MonadIO m) => LogA -> IndAdmixpops -> m Int
+sampleInIndForChunk :: (MonadIO m) => LogA -> IndConcrete -> m Int
 sampleInIndForChunk logEnv ind = do
     gen <- liftIO getStdGen
     let indName = _indName ind
@@ -46,17 +46,17 @@ sampleInIndForChunk logEnv ind = do
 
 samplePerSNP :: (MonadIO m) =>
        Bool
-    -> [IndAdmixpops]
+    -> [IndConcrete]
     -> (EigenstratSnpEntry, GenoLine)
     -> m (EigenstratSnpEntry, GenoLine)
 samplePerSNP marginalizeMissing inds (snpEntry, genoLine) = do
     entries <- mapM (\x -> sampleSNPForOneOutInd marginalizeMissing x genoLine) inds
     return (snpEntry, V.fromList entries)
 
-sampleSNPForOneOutInd :: (MonadIO m) => Bool -> IndAdmixpops -> GenoLine -> m GenoEntry
+sampleSNPForOneOutInd :: (MonadIO m) => Bool -> IndConcrete -> GenoLine -> m GenoEntry
 sampleSNPForOneOutInd marginalizeMissing ind genoLine = do
     gen <- liftIO getStdGen
-    let indIDsAndFracs = map (\(PopAdmixpops _ frac_ inds_) -> (inds_, frac_)) $ _popSet ind
+    let indIDsAndFracs = map (\(PopFracConcrete _ frac_ inds_) -> (inds_, frac_)) $ _popSet ind
     let sampledGenotypesPerPop = map (sampleGenotypePerPop gen) indIDsAndFracs
     let sampledGenotypeAcrossPops = sampleWeightedList gen sampledGenotypesPerPop
     _ <- liftIO newStdGen
