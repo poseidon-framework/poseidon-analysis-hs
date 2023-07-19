@@ -9,13 +9,13 @@ import           Data.Ratio                 ((%))
 import qualified Data.Vector                as V
 import           Pipes
 import           Pipes.Safe
-import           Poseidon.Utils             (LogEnv, logDebug, logWithEnv)
+import           Poseidon.Utils             (LogA, logDebug, logWithEnv)
 import           SequenceFormats.Eigenstrat
 
 -- admixpops
 
 samplePerChunk :: (MonadIO m) =>
-       LogEnv
+       LogA
     -> [IndAdmixpops]
     -> Producer (EigenstratSnpEntry, GenoLine) m r
     -> Producer (EigenstratSnpEntry, GenoLine) m r
@@ -28,7 +28,7 @@ samplePerChunk logEnv inds prod = do
         let newGenoLine = V.fromList $ [genoLine V.! i | i <- sampledInds]
         yield (snpEntry, newGenoLine)
 
-sampleInIndForChunk :: (MonadIO m) => LogEnv -> IndAdmixpops -> m Int
+sampleInIndForChunk :: (MonadIO m) => LogA -> IndAdmixpops -> m Int
 sampleInIndForChunk logEnv ind = do
     gen <- liftIO getStdGen
     let indName = _indName ind

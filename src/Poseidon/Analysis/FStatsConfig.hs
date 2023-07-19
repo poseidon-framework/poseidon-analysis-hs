@@ -13,7 +13,9 @@ import           Data.Aeson              (FromJSON (..), withObject, withText,
 import qualified Data.ByteString         as B
 import           Data.Char               (isSpace)
 import           Data.Yaml               (decodeEither')
-import           Poseidon.EntitiesList   (PoseidonEntity (..))
+import           Poseidon.EntitiesList   (PoseidonEntity (..),
+                                          PoseidonIndividual (..))
+import           Poseidon.SecondaryTypes (IndividualInfo (..))
 import qualified Text.Parsec             as P
 import qualified Text.Parsec.String      as P
 import           Text.Read               (readMaybe)
@@ -157,10 +159,21 @@ fStatSpecParser = do
       where
         parsePac   = Pac   <$> P.between (P.char '*') (P.char '*') parseName
         parseGroup = Group <$> parseName
-        parseInd   = Ind   <$> P.between (P.char '<') (P.char '>') parseName
+        parseInd   = Ind   <$> (P.try parseSimpleInd <|> parseSpecificInd)
         parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
-        charList = ",<>*()" :: [Char] -- we use a custom parser here, because we cannot tolerate bracket openings, which is something that is not constrained in
-            -- Poseidon.EntityList.
+        charList = ":,<>*()" :: [Char] -- we use a custom parser here, because we cannot tolerate bracket openings and closings,
+            -- which is something that is not constrained in Poseidon.EntityList.
+        parseSimpleInd   = SimpleInd <$> P.between (P.char '<') (P.char '>') parseName
+        parseSpecificInd = do
+            _ <- P.char '<'
+            pacName <- parseName
+            _ <- P.char ':'
+            groupName <- parseName
+            _ <- P.char ':'
+            indName <- parseName
+            _ <- P.char '>'
+            return $ SpecificInd (IndividualInfo indName [groupName] pacName)
+
 
 fstatSlotLength :: FStatType -> Int
 fstatSlotLength fStatType = case fStatType of

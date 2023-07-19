@@ -9,14 +9,14 @@ import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq,
                                               computeJackknifeAdditive,
                                               computeJackknifeOriginal,
-                                              filterTransitions)
+                                              filterTransitions,
+                                              resolveEntityIndicesIO)
 
 import           Control.Exception           (catch, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
                                               purely)
 import           Control.Monad               (forM_, unless, when)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
-import           Control.Monad.Reader        (ask)
 import qualified Data.ByteString             as B
 import           Data.List                   (intercalate, nub, (\\))
 import qualified Data.Vector                 as V
@@ -31,7 +31,6 @@ import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
 import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
-                                              conformingEntityIndices,
                                               findNonExistentEntities,
                                               indInfoFindRelevantPackageNames,
                                               underlyingEntity)
@@ -43,7 +42,9 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               readPoseidonPackageCollection)
 import           Poseidon.SecondaryTypes     (IndividualInfo (..))
 import           Poseidon.Utils              (PoseidonException (..),
-                                              PoseidonLogIO, logError, logInfo)
+                                              PoseidonIO, envInputPlinkMode,
+                                              envLogAction, logError, logInfo,
+                                              logWithEnv)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
@@ -82,7 +83,7 @@ data BlockData = BlockData
     }
     deriving (Show)
 
-runRAS :: RASOptions -> PoseidonLogIO ()
+runRAS :: RASOptions -> PoseidonIO ()
 runRAS rasOpts = do
     -- reading in the configuration file
     PopConfigYamlStruct groupDefs popLefts popRights maybeOutgroup <- readPopConfig (_rasPopConfig rasOpts)
@@ -128,8 +129,8 @@ runRAS rasOpts = do
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
         -- build the main fold, i.e. the thing that does the actual work with the genotype data and computes the RAS statistics (see buildRasFold)
-        let rasFold = buildRasFold jointIndInfo (_rasMinFreq rasOpts) (_rasMaxFreq rasOpts)
-                (_rasMaxMissingness rasOpts) maybeOutgroup popLefts popRights
+        rasFold <- buildRasFold jointIndInfo (_rasMinFreq rasOpts) (_rasMaxFreq rasOpts)
+            (_rasMaxMissingness rasOpts) maybeOutgroup popLefts popRights
 
         -- build a bed-filter if needed
         let bedFilterFunc = case _rasBedFile rasOpts of
@@ -137,10 +138,11 @@ runRAS rasOpts = do
                 Just fn -> filterThroughBed (readBedFile fn) (genomicPosition . fst)
 
         -- run the fold and retrieve the block data needed for RAS computations and output
-        logEnv <- ask
+        logA <- envLogAction
+        inPlinkPopMode <- envInputPlinkMode
         blockData <- liftIO $ catch (
             runSafeT $ do
-                (_, eigenstratProd) <- getJointGenotypeData logEnv False relevantPackages Nothing
+                (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
                 let eigenstratProdFiltered =
                         bedFilterFunc (eigenstratProd >->
                                        P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->
@@ -150,14 +152,14 @@ runRAS rasOpts = do
                         JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
                         JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
                 let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
-                liftIO $ hPutStrLn stderr "performing counts"
+                logWithEnv logA . logInfo $ "performing counts"
                 purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
             ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
 
         -- outputting and computing results
         logInfo "collating results"
 
-        -- Output for the standard output (a simple table with RAS estimates, using the pretty-printing Text.Table.Layout package )
+        -- Output for the standard output (a simple table with RAS estimates)
         liftIO . putStrLn . intercalate "\t" $ ["Left", "Right", "Norm", "RAS", "StdErr"]
         forM_ (zip [0..] popLefts) $ \(i, popLeft) ->
             forM_ (zip [0..] popRights) $ \(j, popRight) -> do
@@ -237,23 +239,23 @@ weightedAverage vals weights =
         denom = sum weights
     in  num / denom
 
-readPopConfig :: FilePath -> PoseidonLogIO PopConfig
+readPopConfig :: FilePath -> PoseidonIO PopConfig
 readPopConfig fn = do
     bs <- liftIO $ B.readFile fn
     case decodeEither' bs of
         Left err -> liftIO . throwIO $ PopConfigYamlException fn (show err)
         Right x  -> return x
 
-buildRasFold :: (MonadIO m) => [IndividualInfo] -> FreqSpec -> FreqSpec -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> FoldM m (EigenstratSnpEntry, GenoLine) BlockData
-buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights =
-    let outgroupI = case maybeOutgroup of
-            Nothing -> []
-            Just o  -> conformingEntityIndices [o] indInfo
-        leftI = [conformingEntityIndices [l] indInfo | l <- popLefts]
-        rightI = [conformingEntityIndices [r] indInfo | r <- popRights]
-        nL = length popLefts
+buildRasFold :: (MonadIO m) => [IndividualInfo] -> FreqSpec -> FreqSpec -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
+    outgroupI <- case maybeOutgroup of
+            Nothing -> return []
+            Just o  -> resolveEntityIndicesIO [o] indInfo
+    leftI <- sequence [resolveEntityIndicesIO [l] indInfo | l <- popLefts]
+    rightI <- sequence [resolveEntityIndicesIO [r] indInfo | r <- popRights]
+    let nL = length popLefts
         nR = length popRights
-    in  FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
+    return $ FoldM (step outgroupI leftI rightI) (initialise nL nR) extract
   where
     step :: (MonadIO m) => [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
         (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)

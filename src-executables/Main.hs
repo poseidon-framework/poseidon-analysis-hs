@@ -25,8 +25,9 @@ import           Poseidon.CLI.OptparseApplicativeParsers
 import           Poseidon.PoseidonVersion                (showPoseidonVersion,
                                                           validPoseidonVersions)
 import           Poseidon.Utils                          (LogMode (..),
+                                                          PlinkPopNameMode (..),
                                                           PoseidonException (..),
-                                                          PoseidonLogIO,
+                                                          PoseidonIO, TestMode,
                                                           logError,
                                                           renderPoseidonException,
                                                           usePoseidonLogger)
@@ -37,7 +38,9 @@ import           Text.Read                               (readEither)
 
 data Options = Options {
     _logMode    :: LogMode
+  , _testMode   :: TestMode
   , _errLength  :: ErrorLength
+  , _plinkMode  :: PlinkPopNameMode
   , _subcommand :: Subcommand
   }
 
@@ -50,12 +53,12 @@ main :: IO ()
 main = do
     hPutStrLn stderr renderVersion
     hPutStrLn stderr ""
-    (Options logMode errLength subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
-    catch (usePoseidonLogger logMode $ runCmd subcommand) (handler logMode errLength)
+    (Options logMode testMode errLength plinkMode subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
+    catch (usePoseidonLogger logMode testMode plinkMode $ runCmd subcommand) (handler logMode testMode errLength plinkMode)
     where
-        handler :: LogMode -> ErrorLength -> PoseidonException -> IO ()
-        handler l len e = do
-            usePoseidonLogger l $ logError $ truncateErr len $ renderPoseidonException e
+        handler :: LogMode -> TestMode -> ErrorLength -> PlinkPopNameMode -> PoseidonException -> IO ()
+        handler l t len pm e = do
+            usePoseidonLogger l t pm $ logError $ truncateErr len $ renderPoseidonException e
             exitFailure
         truncateErr :: ErrorLength -> String -> String
         truncateErr CharInf         s = s
@@ -63,14 +66,20 @@ main = do
             | length s > len          = take len s ++ "... (see more with --errLength)"
             | otherwise               = s
 
-runCmd :: Subcommand -> PoseidonLogIO ()
+runCmd :: Subcommand -> PoseidonIO ()
 runCmd o = case o of
     CmdFstats opts    -> runFstats opts
     CmdRAS opts       -> runRAS opts
     CmdAdmixPops opts -> runAdmixPops opts
 
 optParserInfo :: OP.ParserInfo Options
-optParserInfo = OP.info (OP.helper <*> versionOption <*> (Options <$> parseLogMode <*> parseErrorLength <*> subcommandParser)) (
+optParserInfo = OP.info (OP.helper <*> versionOption <*>
+        (Options <$> parseLogMode
+                 <*> parseTestMode
+                 <*> parseErrorLength
+                 <*> parseInputPlinkPopMode
+                 <*> subcommandParser)
+        ) (
     OP.briefDesc <>
     OP.progDesc "xerxes is an analysis tool for Poseidon packages. \
                 \Report issues here: \
@@ -114,6 +123,7 @@ fstatsOptParser = FstatsOptions <$> parseBasePaths
                                 <*> parseMaxSnps
                                 <*> parseNoTransitions
                                 <*> parseTableOutFile
+                                <*> parseBlockTableFile
 
 parseJackknife :: OP.Parser JackknifeMode
 parseJackknife = OP.option (OP.eitherReader readJackknifeString) (OP.long "jackknife" <> OP.short 'j' <>
@@ -231,6 +241,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseOutGenotypeFormat True
                                       <*> parseOutPackagePath
                                       <*> parseMaybeOutPackageName
+                                      <*> parseOutputPlinkPopMode
 
 parseIndWithAdmixtureSetDirect :: OP.Parser [InIndAdmixpops]
 parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (
