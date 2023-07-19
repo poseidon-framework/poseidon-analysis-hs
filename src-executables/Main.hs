@@ -112,7 +112,7 @@ subcommandParser =
     rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
         (OP.progDesc "Compute RAS statistics on groups and individuals within and across Poseidon packages")
     admixPopsOptInfo = OP.info (OP.helper <*> (CmdAdmixPops <$> admixPopsOptParser))
-        (OP.progDesc "Generate individuals with randomized genotype profiles based on admixture proportions")
+        (OP.progDesc "Generate individuals with randomized genotype profiles based on admixture proportions (experimental)")
 
 
 fstatsOptParser :: OP.Parser FstatsOptions
