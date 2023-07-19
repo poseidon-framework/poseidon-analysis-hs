@@ -1,38 +1,38 @@
-module Poseidon.Generator.Types (
-    IndWithAdmixtureSet (..),
-    AdmixtureSet (..),
-    PopulationWithFraction (..),
-    IndWithPosition (..),
-    SpatialTemporalPosition (..),
-    GenoEntry (..)
-) where
+module Poseidon.Generator.Types where
 
-import           Data.List                  (intercalate)
+import           Data.List      (intercalate)
 import           Poseidon.Janno
-import           SequenceFormats.Eigenstrat (GenoEntry (..))
 
-data IndWithAdmixtureSet = IndWithAdmixtureSet {
-      _admixInd  :: String
-    , _admixUnit :: String
-    , _admixSet  :: AdmixtureSet
+data IndConcrete = IndConcrete {
+      _indName   :: String
+    , _groupName :: String
+    , _popSet    :: [PopFracConcrete]
+} deriving (Show)
+
+data PopFracConcrete = PopFracConcrete {
+      _popName :: String
+    , _popFrac :: Rational
+    , _popInds :: [(String, Int)]
+} deriving (Show)
+
+data RequestedInd = RequestedInd {
+      _inIndName   :: String
+    , _inGroupName :: String
+    , _inPopSet    :: [PopFrac]
 }
 
-instance Show IndWithAdmixtureSet where
-    show (IndWithAdmixtureSet _admixInd _admixUnit (AdmixtureSet _popFracList)) =
+instance Show RequestedInd where
+    show (RequestedInd _admixInd _admixUnit _popFracList) =
         "[" ++ _admixInd ++ ":" ++ _admixUnit ++ "]" ++
         "(" ++ intercalate "+" (map show _popFracList) ++ ")"
 
-data AdmixtureSet = AdmixtureSet {
-    _popFracList :: [PopulationWithFraction]
-} deriving (Show)
-
-data PopulationWithFraction = PopulationWithFraction {
-      pop  :: String
-    , frac :: Int
+data PopFrac = PopFrac {
+      _inPopName :: String
+    , _inPopFrac :: Rational
 }
 
-instance Show PopulationWithFraction where
-    show (PopulationWithFraction _pop _frac) =
+instance Show PopFrac where
+    show (PopFrac _pop _frac) =
         _pop ++ "=" ++ show _frac
 
 data IndWithPosition = IndWithPosition {

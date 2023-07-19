@@ -9,32 +9,62 @@ import           Data.Ratio                 ((%))
 import qualified Data.Vector                as V
 import           Pipes
 import           Pipes.Safe
+import           Poseidon.Utils             (LogA, logDebug, logWithEnv)
 import           SequenceFormats.Eigenstrat
 
 -- admixpops
 
-sampleGenoForMultipleIndWithAdmixtureSet ::
+samplePerChunk :: (MonadIO m) =>
+       LogA
+    -> [IndConcrete]
+    -> Producer (EigenstratSnpEntry, GenoLine) m r
+    -> Producer (EigenstratSnpEntry, GenoLine) m r
+samplePerChunk logEnv inds prod = do
+    sampledSourceInds <- mapM (sampleInIndForChunk logEnv) inds
+    for prod (handleEntry sampledSourceInds)
+  where
+    handleEntry :: (MonadIO m) => [Int] -> (EigenstratSnpEntry, GenoLine) -> Producer (EigenstratSnpEntry, GenoLine) m ()
+    handleEntry sampledInds (snpEntry, genoLine) = do
+        let newGenoLine = V.fromList $ [genoLine V.! i | i <- sampledInds]
+        yield (snpEntry, newGenoLine)
+
+sampleInIndForChunk :: (MonadIO m) => LogA -> IndConcrete -> m Int
+sampleInIndForChunk logEnv ind = do
+    gen <- liftIO getStdGen
+    let indName = _indName ind
+        popSet =  popAdmixPopsToNestedTuple $ _popSet ind
+        sampledPopTuple = sampleWeightedList gen popSet
+        sampledPopName = fst sampledPopTuple
+        sampledSourceInd = sampleWeightedList gen $ zip (snd sampledPopTuple) (repeat 1)
+    logWithEnv logEnv . logDebug $
+        "Sampling for artificial individual " ++
+        indName ++ ": " ++ sampledPopName ++ " " ++ (fst sampledSourceInd)
+    _ <- liftIO newStdGen
+    return $ snd sampledSourceInd
+    where
+        popAdmixPopsToNestedTuple x = zip (map (\y -> (_popName y, _popInds y)) x) (map _popFrac x)
+
+samplePerSNP :: (MonadIO m) =>
        Bool
-    -> [[([Int], Rational)]]
+    -> [IndConcrete]
     -> (EigenstratSnpEntry, GenoLine)
-    -> SafeT IO (EigenstratSnpEntry, GenoLine)
-sampleGenoForMultipleIndWithAdmixtureSet marginalizeMissing infoForIndividualInd (snpEntry, genoLine) = do
-    entries <- mapM (\x -> sampleGenoForOneIndWithAdmixtureSet marginalizeMissing x genoLine) infoForIndividualInd
+    -> m (EigenstratSnpEntry, GenoLine)
+samplePerSNP marginalizeMissing inds (snpEntry, genoLine) = do
+    entries <- mapM (\x -> sampleSNPForOneOutInd marginalizeMissing x genoLine) inds
     return (snpEntry, V.fromList entries)
 
-sampleGenoForOneIndWithAdmixtureSet :: Bool -> [([Int], Rational)] -> GenoLine -> SafeT IO GenoEntry
-sampleGenoForOneIndWithAdmixtureSet marginalizeMissing xs genoLine = do
+sampleSNPForOneOutInd :: (MonadIO m) => Bool -> IndConcrete -> GenoLine -> m GenoEntry
+sampleSNPForOneOutInd marginalizeMissing ind genoLine = do
     gen <- liftIO getStdGen
-    --liftIO $ putStrLn $ show $ xs
-    --liftIO $ putStrLn $ show $ map (\(x,y) -> (getGenotypeFrequency x genoLine, y)) xs
-    let sampledGenotypesPerPop = map (\(x,y) -> (sampleWeightedList gen $ getGenotypeFrequency marginalizeMissing x genoLine, y)) xs
-    --liftIO $ putStrLn $ show sampledGenotypesPerPop
-    --liftIO newStdGen -- do I need a second one?
-    --gen <- liftIO getStdGen
+    let indIDsAndFracs = map (\(PopFracConcrete _ frac_ inds_) -> (inds_, frac_)) $ _popSet ind
+    let sampledGenotypesPerPop = map (sampleGenotypePerPop gen) indIDsAndFracs
     let sampledGenotypeAcrossPops = sampleWeightedList gen sampledGenotypesPerPop
-    --liftIO $ putStrLn $ show sampledGenotypeAcrossPops
     _ <- liftIO newStdGen
     return sampledGenotypeAcrossPops
+    where
+        sampleGenotypePerPop gen_ (x,y) =
+            let sampledGeno = sampleWeightedList gen_ $ getGenotypeFrequency marginalizeMissing (map snd x) genoLine
+            in (sampledGeno, y)
 
 getGenotypeFrequency :: Bool -> [Int] -> GenoLine -> [(GenoEntry, Rational)]
 getGenotypeFrequency marginalizeMissing individualIndices genoLine =

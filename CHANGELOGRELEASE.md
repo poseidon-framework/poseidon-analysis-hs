@@ -1,9 +1,15 @@
+# V0.3.4.0: Poseidon 2.7.1 and running admixpops in chunks
+
+This release yet again updates the version of poseidon-hs (to v1.2.1.0). This enables `xerxes` to read Poseidon packages of version 2.7.1. We also switched to a newer stack resolver version and updated the GitHub Actions for automatic testing.
+
+One new feature was added: The code for the `admixpops` was refactored to include a new input flag `--inChunks`. This allows to sample not just on the level of individual SNPs for the construction of artificial ancestry-chimeras, but also in chunks, so longer stretches of SNPs of length `--chunkSize`. Please note that `admixpops` remains experimental with no guarantees of correctness.
+
 # V0.3.2.0: Poseidon 2.7.0 and fstats-block-output
 
 - This release updates the underlying Poseidon library, which makes this version now compatible with newest Poseidon packages of version 2.7.0.
 - We also added a new feature to `xerxes fstats` to output statistics per Jackknife-block.
 - The output was also prettified using our central log-functionality.
-- The GHC compiler which this package depends upon has also been updated to a much newer release than the version before. In particular, this new compiler runs on the newest Mac M2 Macbook-Pros (which the previous ones did not)
+- The GHC compiler which this package depends upon has also been updated to a much newer release than the version before. In particular, this new compiler runs on the newest Mac M2 Macbook-Pros (which the previous ones did not).
 
 # V0.3.0.0: Added a first implementation of admixpops
 

@@ -1,10 +1,10 @@
 name: stylish-haskell
 
-# Trigger the workflow on push or pull request, but only for the master branch
+# Trigger the workflow on push or pull request, but only for the main branch
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
 
 jobs:
   stylishHaskell:
