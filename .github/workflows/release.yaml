@@ -11,7 +11,6 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v3
-
       - name: Create Release
         id: create_release
         uses: ncipollo/release-action@v1
@@ -29,9 +28,16 @@ jobs:
     - name: Create container
       run: docker create --name linuxcontainer linux
     - name: Copy executable
-      run: docker cp linuxcontainer:/root/.local/bin/xerxes xerxes-linux
-    - name: update-release
-      run: bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=poseidon-framework repo=poseidon-analysis-hs tag=$(basename $GITHUB_REF) filename=xerxes-linux
+      run: docker cp linuxcontainer:/root/.local/bin/xerxes xerxes-Linux
+    - name: Upload Release Asset
+      uses: ncipollo/release-action@v1
+      with:
+        name: Release ${{ github.ref_name }}
+        draft: true
+        allowUpdates: true
+        artifactErrorsFailBuild: true
+        artifacts: xerxes-Linux
+        artifactContentType: application/octet-stream
   build-on-mac:
     needs: [create_release]
     runs-on: macos-latest
@@ -44,7 +50,14 @@ jobs:
         enable-stack: true
     - name: Build
       run: stack install
-    - name: Update-release
-      run: |
-        cp ~/.local/bin/xerxes xerxes-macOS
-        bash .github/workflows/upload-github-release-asset.sh github_api_token=${{ secrets.GITHUB_TOKEN }} owner=poseidon-framework repo=poseidon-analysis-hs tag=$(basename $GITHUB_REF) filename=xerxes-macOS
+    - name: Copy executable
+      run: cp ~/.local/bin/xerxes xerxes-macOS
+    - name: Upload Release Asset
+      uses: ncipollo/release-action@v1
+      with:
+        name: Release ${{ github.ref_name }}
+        draft: true
+        allowUpdates: true
+        artifactErrorsFailBuild: true
+        artifacts: xerxes-macOS
+        artifactContentType: application/octet-stream
