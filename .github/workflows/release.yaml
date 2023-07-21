@@ -45,7 +45,7 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v3
     - name: Setup Haskell
-      uses: haskell/actions/setup@v1
+      uses: haskell/actions/setup@v2
       with:
         enable-stack: true
     - name: Build
