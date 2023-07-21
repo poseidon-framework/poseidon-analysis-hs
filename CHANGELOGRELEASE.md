@@ -2,7 +2,7 @@
 
 This release yet again updates the version of poseidon-hs (to v1.2.1.0). This enables `xerxes` to read Poseidon packages of version 2.7.1. We also switched to a newer stack resolver version and updated the GitHub Actions for automatic testing.
 
-One new feature was added: The code for the `admixpops` was refactored to include a new input flag `--inChunks`. This allows to sample not just on the level of individual SNPs for the construction of artificial ancestry-chimeras, but also in chunks, so longer stretches of SNPs of length `--chunkSize`. Please note that `admixpops` remains experimental with no guarantees of correctness.
+One new feature was added: The code for the `admixpops` subcommand was refactored to include a new input flag `--inChunks`. This allows to sample not just on the level of individual SNPs for the construction of artificial ancestry-chimeras, but also in chunks, so longer stretches of SNPs of length `--chunkSize`. Please note that `admixpops` remains experimental with no guarantees of correctness.
 
 # V0.3.2.0: Poseidon 2.7.0 and fstats-block-output
 
