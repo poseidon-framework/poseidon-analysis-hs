@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
     - name: Build Docker image
       run: docker build -t linux -f Dockerfile.linux .
     - name: Create container
@@ -43,7 +43,7 @@ jobs:
     runs-on: macos-latest
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
     - name: Setup Haskell
       uses: haskell/actions/setup@v1
       with:
