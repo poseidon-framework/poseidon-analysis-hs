@@ -1,0 +1,42 @@
+# https://kodimensional.dev/github-actions
+name: CI
+
+# Trigger the workflow on push or pull request, but only for the main branch
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  stack:
+    name: stack / ghc ${{ matrix.ghc }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        stack: ["latest"]
+        ghc: ["9.2.7"]
+
+    steps:
+    # setup and loading cache
+    - name: Check out code
+      uses: actions/checkout@v3
+
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        enable-stack: true
+        stack-version: ${{ matrix.stack }}
+
+    - name: Cache ~/.stack
+      uses: freckle/stack-cache-action@v2
+
+    - name: Build
+      run: |
+        stack build \
+        --system-ghc \
+        --test \
+        --coverage \
+        --bench \
+        --no-run-benchmarks \
+        --pedantic

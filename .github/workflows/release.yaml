@@ -1,0 +1,63 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  create_release:
+    name: Create Github Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: true
+  build-on-linux:
+    needs: [create_release]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+    - name: Build Docker image
+      run: docker build -t linux -f Dockerfile.linux .
+    - name: Create container
+      run: docker create --name linuxcontainer linux
+    - name: Copy executable
+      run: docker cp linuxcontainer:/root/.local/bin/xerxes xerxes-Linux
+    - name: Upload Release Asset
+      uses: ncipollo/release-action@v1
+      with:
+        name: Release ${{ github.ref_name }}
+        draft: true
+        allowUpdates: true
+        artifactErrorsFailBuild: true
+        artifacts: xerxes-Linux
+        artifactContentType: application/octet-stream
+  build-on-mac:
+    needs: [create_release]
+    runs-on: macos-latest
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+    - name: Setup Haskell
+      uses: haskell/actions/setup@v2
+      with:
+        enable-stack: true
+    - name: Build
+      run: stack install
+    - name: Copy executable
+      run: cp ~/.local/bin/xerxes xerxes-macOS
+    - name: Upload Release Asset
+      uses: ncipollo/release-action@v1
+      with:
+        name: Release ${{ github.ref_name }}
+        draft: true
+        allowUpdates: true
+        artifactErrorsFailBuild: true
+        artifacts: xerxes-macOS
+        artifactContentType: application/octet-stream
