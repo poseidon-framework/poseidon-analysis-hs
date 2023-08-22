@@ -1,3 +1,4 @@
+- 0.3.5.0: Slightly different behaviour with outgroup-based ascertainment in RAS, now restricting to sites where the outgroup is homozygous
 - 0.3.4.0: Added an option to run admixpops on chunks, not just individual SNPs. Also some technical updates (GitHub actions, stack resolver version).
 - 0.3.3.0: Switched to poseidon-hs v1.2.1.0, which supports Poseidon v2.7.1.
 - 0.3.2.0: Added feature to output per-block statistics in Fstats.
