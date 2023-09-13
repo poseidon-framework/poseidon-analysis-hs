@@ -19,8 +19,7 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal,
-                                                 filterTransitions,
-                                                 resolveEntityIndicesIO)
+                                                 filterTransitions)
 
 import           Control.Exception              (catch, throwIO)
 import           Control.Foldl                  (FoldM (..), impurely, list,
@@ -40,25 +39,25 @@ import           Pipes                          (cat, for, yield, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
-import           Poseidon.EntitiesList          (PoseidonEntity (..),
-                                                 findNonExistentEntities,
-                                                 indInfoFindRelevantPackageNames,
-                                                 underlyingEntity)
+import           Poseidon.EntityTypes         (PoseidonEntity (..),
+                                                 checkIfAllEntitiesExist,
+                                                 determineRelevantPackages,
+                                                 underlyingEntity,
+                                                 resolveUniqueEntityIndices,
+                                                 IndividualInfo (..))
 import           Poseidon.Package               (PackageReadOptions (..),
                                                  PoseidonPackage (..),
                                                  defaultPackageReadOptions,
                                                  getJointGenotypeData,
                                                  getJointIndividualInfo,
                                                  readPoseidonPackageCollection)
-import           Poseidon.SecondaryTypes        (IndividualInfo (..))
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, envInputPlinkMode,
-                                                 envLogAction, logError,
+                                                 envLogAction,
                                                  logInfo, logWithEnv)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
-import           System.Exit                    (exitFailure)
 import           System.IO                      (IOMode (..), hPutStrLn,
                                                  withFile)
 import           Text.Layout.Table              (asciiRoundS, column, def,
@@ -115,100 +114,95 @@ runFstats opts = do
     let allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++ collectedStats) \\ newGroups
 
     let jointIndInfoAll = getJointIndividualInfo allPackages
-    let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
+    checkIfAllEntitiesExist allEntities jointIndInfoAll
 
-    if not. null $ missingEntities then do
-        logError $ "The following entities couldn't be found: " ++ (intercalate ", " . map show $ missingEntities)
-        liftIO exitFailure
-    else do
+    -- annotate all individuals with the new adhoc-group definitions where necessary
+    let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
 
-        -- annotate all individuals with the new adhoc-group definitions where necessary
-        let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
+    -- select only the packages needed for the statistics to be computed
+    let relevantPackageNames = determineRelevantPackages collectedStats jointIndInfoWithNewGroups
+    let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) allPackages
+    logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
+    mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
 
-        -- select only the packages needed for the statistics to be computed
-        let relevantPackageNames = indInfoFindRelevantPackageNames collectedStats jointIndInfoWithNewGroups
-        let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
-        logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-        mapM_ (logInfo . posPacTitle) relevantPackages
+    -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
+    let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
-        -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
-        let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
+    logInfo "Computing stats:"
+    mapM_ (logInfo . summaryPrintFstats) statSpecs
+    logA <- envLogAction
+    inPlinkPopMode <- envInputPlinkMode
+    statsFold <- buildStatSpecsFold jointIndInfo statSpecs
+    blocks <- liftIO $ catch (
+        runSafeT $ do
+            (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
+            let eigenstratProdFiltered =
+                    eigenstratProd >->
+                    P.filter chromFilter >->
+                    capNrSnps (_foMaxSnps opts) >-> filterTransitions (_foNoTransitions opts)
+                eigenstratProdInChunks = case _foJackknifeMode opts of
+                    JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
+                    JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
+            let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
+            purely P.fold list (summaryStatsProd >-> printBlockInfoPipe logA)
+        ) (throwIO . PoseidonGenotypeExceptionForward)
+    let jackknifeEstimates = processBlocks statSpecs blocks
+    let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
+    let hasAscertainment = or $ do
+            FStatSpec _ _ maybeAsc <- statSpecs
+            case maybeAsc of
+                Nothing -> return False
+                _       -> return True
 
-        logInfo "Computing stats:"
-        mapM_ (logInfo . summaryPrintFstats) statSpecs
-        logA <- envLogAction
-        inPlinkPopMode <- envInputPlinkMode
-        statsFold <- buildStatSpecsFold jointIndInfo statSpecs
-        blocks <- liftIO $ catch (
-            runSafeT $ do
-                (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
-                let eigenstratProdFiltered =
-                        eigenstratProd >->
-                        P.filter chromFilter >->
-                        capNrSnps (_foMaxSnps opts) >-> filterTransitions (_foNoTransitions opts)
-                    eigenstratProdInChunks = case _foJackknifeMode opts of
-                        JackknifePerChromosome  -> chunkEigenstratByChromosome eigenstratProdFiltered
-                        JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
-                let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
-                purely P.fold list (summaryStatsProd >-> printBlockInfoPipe logA)
-            ) (throwIO . PoseidonGenotypeExceptionForward)
-        let jackknifeEstimates = processBlocks statSpecs blocks
-        let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
-        let hasAscertainment = or $ do
-                FStatSpec _ _ maybeAsc <- statSpecs
-                case maybeAsc of
-                    Nothing -> return False
-                    _       -> return True
+    -- the standard output, pretty-printed to stdout
+    let nrCols = if hasAscertainment then 11 else 9
+    let colSpecs = replicate nrCols (column expand def def def)
+        tableH = if hasAscertainment
+                    then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
+                    else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
+        tableB = do
+            (fstat, (estimate, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
+            let FStatSpec fType slots maybeAsc = fstat
+                abcdStr = take 4 (map show slots ++ repeat "")
+                (asc1, asc2) = case maybeAsc of
+                    Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
+                    Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
+                    _ ->                                            ("n/a",                       "n/a")
+            if hasAscertainment then
+                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+            else
+                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+    liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
 
-        -- the standard output, pretty-printed to stdout
-        let nrCols = if hasAscertainment then 11 else 9
-        let colSpecs = replicate nrCols (column expand def def def)
-            tableH = if hasAscertainment
-                     then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
-                     else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
-            tableB = do
-                (fstat, (estimate, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
-                let FStatSpec fType slots maybeAsc = fstat
-                    abcdStr = take 4 (map show slots ++ repeat "")
-                    (asc1, asc2) = case maybeAsc of
-                        Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
-                        Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
-                        _ ->                                            ("n/a",                       "n/a")
-                if hasAscertainment then
-                    return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
-                else
-                    return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
-        liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
+    -- optionally output the results into a tab-separated table
+    case _foTableOut opts of
+        Nothing -> return ()
+        Just outFn -> liftIO . withFile outFn WriteMode $
+            \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
 
-        -- optionally output the results into a tab-separated table
-        case _foTableOut opts of
-            Nothing -> return ()
-            Just outFn -> liftIO . withFile outFn WriteMode $
-                \h -> mapM_ (hPutStrLn h . intercalate "\t") (tableH : tableB)
-
-        -- optionally output the block data
-        case _foBlockTableOut opts of
-            Nothing -> return ()
-            Just fn -> liftIO . withFile fn WriteMode $ \h -> do
-                let headerLine = if hasAscertainment
-                     then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
-                     else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
-                hPutStrLn h . intercalate "\t" $ headerLine
-                forM_ (zip [(1 :: Int)..] blocks) $ \(i, block)  -> do
-                    let BlockData startPos endPos nrSites _ = block
-                        blockEstimates = processBlockIndividually statSpecs block
-                    forM_ (zip statSpecs blockEstimates) $ \(statSpec, blockEstimate) -> do
-                        let FStatSpec fType slots maybeAsc = statSpec
-                            abcdStr = take 4 (map show slots ++ repeat "")
-                            (asc1, asc2) = case maybeAsc of
-                                Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
-                                Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
-                                _ ->                                            ("n/a",                       "n/a")
-                            posInfo = [show (fst startPos), show (snd startPos), show (fst endPos), show (snd endPos)]
-                        if hasAscertainment then
-                            hPutStrLn h . intercalate "\t" $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, asc1, asc2, show blockEstimate]
-                        else
-                            hPutStrLn h . intercalate "\t"  $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, show blockEstimate]
+    -- optionally output the block data
+    case _foBlockTableOut opts of
+        Nothing -> return ()
+        Just fn -> liftIO . withFile fn WriteMode $ \h -> do
+            let headerLine = if hasAscertainment
+                    then ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Block_Estimate"]
+                    else ["Statistic", "a", "b", "c", "d", "BlockNr", "StartChrom", "StartPos", "EndChrom", "EndPos", "NrSites", "Block_Estimate"]
+            hPutStrLn h . intercalate "\t" $ headerLine
+            forM_ (zip [(1 :: Int)..] blocks) $ \(i, block)  -> do
+                let BlockData startPos endPos nrSites _ = block
+                    blockEstimates = processBlockIndividually statSpecs block
+                forM_ (zip statSpecs blockEstimates) $ \(statSpec, blockEstimate) -> do
+                    let FStatSpec fType slots maybeAsc = statSpec
+                        abcdStr = take 4 (map show slots ++ repeat "")
+                        (asc1, asc2) = case maybeAsc of
+                            Just (AscertainmentSpec (Just og) ref lo up) -> (show (og, ref),              show (lo, up))
+                            Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
+                            _ ->                                            ("n/a",                       "n/a")
+                        posInfo = [show (fst startPos), show (snd startPos), show (fst endPos), show (snd endPos)]
+                    if hasAscertainment then
+                        hPutStrLn h . intercalate "\t" $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, asc1, asc2, show blockEstimate]
+                    else
+                        hPutStrLn h . intercalate "\t"  $ [show fType] ++ abcdStr ++ [show i] ++ posInfo ++ [show nrSites, show blockEstimate]
   where
     chromFilter (EigenstratSnpEntry chrom _ _ _ _ _, _) = chrom `notElem` _foExcludeChroms opts
     capNrSnps Nothing  = cat
@@ -238,7 +232,7 @@ buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> Poseidon
 buildStatSpecsFold indInfo fStatSpecs = do
     entityIndicesLookup <- do
         let collectedSpecs = collectStatSpecGroups fStatSpecs
-        entityIndices <- sequence [resolveEntityIndicesIO [s] indInfo | s <- collectedSpecs]
+        entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfo | s <- collectedSpecs]
         return . M.fromList . zip collectedSpecs $ entityIndices
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do

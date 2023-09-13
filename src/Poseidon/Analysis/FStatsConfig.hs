@@ -13,9 +13,9 @@ import           Data.Aeson              (FromJSON (..), withObject, withText,
 import qualified Data.ByteString         as B
 import           Data.Char               (isSpace)
 import           Data.Yaml               (decodeEither')
-import           Poseidon.EntitiesList   (PoseidonEntity (..),
-                                          PoseidonIndividual (..))
-import           Poseidon.SecondaryTypes (IndividualInfo (..))
+import           Poseidon.EntityTypes    (PacNameAndVersion (..),
+                                          PoseidonEntity (..))
+import           Poseidon.Version        (parseVersion)
 import qualified Text.Parsec             as P
 import qualified Text.Parsec.String      as P
 import           Text.Read               (readMaybe)
@@ -156,23 +156,37 @@ fStatSpecParser = do
   where
     parseEntities = P.sepBy1 customEntitySpecParser (P.char ',' <* P.spaces)
     customEntitySpecParser = parsePac <|> parseGroup <|> parseInd
-      where
-        parsePac   = Pac   <$> P.between (P.char '*') (P.char '*') parseName
-        parseGroup = Group <$> parseName
-        parseInd   = Ind   <$> (P.try parseSimpleInd <|> parseSpecificInd)
-        parseName  = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` charList)))
-        charList = ":,<>*()" :: [Char] -- we use a custom parser here, because we cannot tolerate bracket openings and closings,
-            -- which is something that is not constrained in Poseidon.EntityList.
-        parseSimpleInd   = SimpleInd <$> P.between (P.char '<') (P.char '>') parseName
-        parseSpecificInd = do
-            _ <- P.char '<'
-            pacName <- parseName
-            _ <- P.char ':'
-            groupName <- parseName
-            _ <- P.char ':'
-            indName <- parseName
-            _ <- P.char '>'
-            return $ SpecificInd (IndividualInfo indName [groupName] pacName)
+    -- annoyingly we have to use a custom parser here, because in this input
+    -- form we cannot allow brackets in entity-names. The code is 99% copies from Poseidon.EntityTypes.
+    parsePac         = Pac   <$> P.between (P.char '*') (P.char '*') parseNameAndVer
+    parseGroup       = Group <$> parseName
+    parseInd         = P.try parseSimpleInd <|> parseSpecificInd
+    parseNameAndVer  = do
+        namePart <- parseNamePart ""
+        versionPart <- P.optionMaybe parseVersion
+        return $ PacNameAndVersion namePart versionPart
+    parseNamePart prevPart = do
+        curPart  <- P.many1       (P.satisfy (\c -> not (isSpace c || c `elem` [':', ',', '<', '>', '*', '-', '(', ')'])))
+        nextChar <- P.optionMaybe (P.satisfy (\c -> not (isSpace c || c `elem` [':', ',', '<', '>', '*', '(', ')'])))
+        case nextChar of
+            Just '-' -> do
+                isVersionComing <- probeForVersion
+                if isVersionComing
+                then return (prevPart ++ curPart)
+                else parseNamePart (prevPart ++ curPart ++ "-")
+            _ -> return (prevPart ++ curPart)
+    probeForVersion  = P.lookAhead (parseVersion >> return True) <|> pure False
+    parseName        = P.many1 (P.satisfy (\c -> not (isSpace c || c `elem` [':', ',', '<', '>', '*', '(', ')'])))
+    parseSimpleInd   = Ind <$> P.between (P.char '<') (P.char '>') parseName
+    parseSpecificInd = do
+        _ <- P.char '<'
+        pac <- parseNameAndVer
+        _ <- P.char ':'
+        groupName <- parseName
+        _ <- P.char ':'
+        indName <- parseName
+        _ <- P.char '>'
+        return $ SpecificInd indName groupName pac
 
 
 fstatSlotLength :: FStatType -> Int

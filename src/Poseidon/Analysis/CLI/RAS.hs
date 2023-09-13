@@ -9,8 +9,7 @@ import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
                                               computeAlleleFreq,
                                               computeJackknifeAdditive,
                                               computeJackknifeOriginal,
-                                              filterTransitions,
-                                              resolveEntityIndicesIO)
+                                              filterTransitions)
 
 import           Control.Exception           (catch, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
@@ -30,17 +29,18 @@ import           Pipes                       (cat, (>->))
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
-import           Poseidon.EntitiesList       (EntitiesList, PoseidonEntity (..),
-                                              findNonExistentEntities,
-                                              indInfoFindRelevantPackageNames,
-                                              underlyingEntity)
+import           Poseidon.EntityTypes       (EntitiesList, PoseidonEntity (..),
+                                              determineNonExistentEntities,
+                                              underlyingEntity,
+                                              resolveUniqueEntityIndices,
+                                              determineRelevantPackages,
+                                              IndividualInfo(..))
 import           Poseidon.Package            (PackageReadOptions (..),
                                               PoseidonPackage (..),
                                               defaultPackageReadOptions,
                                               getJointGenotypeData,
                                               getJointIndividualInfo,
                                               readPoseidonPackageCollection)
-import           Poseidon.SecondaryTypes     (IndividualInfo (..))
 import           Poseidon.Utils              (PoseidonException (..),
                                               PoseidonIO, envInputPlinkMode,
                                               envLogAction, logError, logInfo,
@@ -110,7 +110,7 @@ runRAS rasOpts = do
             popLefts ++ popRights ++ outgroupSpec) \\ newGroups
 
     let jointIndInfoAll = getJointIndividualInfo allPackages
-    let missingEntities = findNonExistentEntities allEntities jointIndInfoAll
+    let missingEntities = determineNonExistentEntities allEntities jointIndInfoAll
     if not. null $ missingEntities then do
         logError $ "The following entities couldn't be found: " ++
             (intercalate ", " . map show $ missingEntities)
@@ -120,10 +120,10 @@ runRAS rasOpts = do
         let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
 
         -- select only the packages needed for the statistics to be computed
-        let relevantPackageNames = indInfoFindRelevantPackageNames (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
-        let relevantPackages = filter (flip elem relevantPackageNames . posPacTitle) allPackages
+        let relevantPackageNames = determineRelevantPackages (popLefts ++ popRights ++ outgroupSpec) jointIndInfoWithNewGroups
+        let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) allPackages
         logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
-        mapM_ (logInfo . posPacTitle) relevantPackages
+        mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
 
         -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
         let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
@@ -250,9 +250,9 @@ buildRasFold :: (MonadIO m) => [IndividualInfo] -> FreqSpec -> FreqSpec -> Doubl
 buildRasFold indInfo minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
     outgroupI <- case maybeOutgroup of
             Nothing -> return []
-            Just o  -> resolveEntityIndicesIO [o] indInfo
-    leftI <- sequence [resolveEntityIndicesIO [l] indInfo | l <- popLefts]
-    rightI <- sequence [resolveEntityIndicesIO [r] indInfo | r <- popRights]
+            Just o  -> resolveUniqueEntityIndices [o] indInfo
+    leftI <- sequence [resolveUniqueEntityIndices [l] indInfo | l <- popLefts]
+    rightI <- sequence [resolveUniqueEntityIndices [r] indInfo | r <- popRights]
     let nL = length popLefts
         nR = length popRights
     return $ FoldM (step outgroupI leftI rightI) (initialise nL nR) extract

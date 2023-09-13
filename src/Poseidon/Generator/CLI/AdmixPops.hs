@@ -16,6 +16,7 @@ import           Pipes
 import qualified Pipes.Group                   as PG
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (runSafeT)
+import           Poseidon.EntityTypes          (HasNameAndVersion (..))
 import           Poseidon.GenotypeData
 import           Poseidon.Janno
 import           Poseidon.Package
@@ -166,7 +167,7 @@ gatherInfoForInd (RequestedInd name_ group_ set_) pacs = do
 
 extractIndsPerPop :: PopFrac -> [PoseidonPackage] -> PoseidonIO PopFracConcrete
 extractIndsPerPop (PopFrac pop_ frac_) relevantPackages = do
-    let allPackageNames = map posPacTitle relevantPackages
+    let allPackageNames = map getPacName relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages
     let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == pop_
         indNames = map extractIndName $ filter filterFunc (zipGroup allPackageNames allIndEntries)

@@ -3,7 +3,7 @@
 module Poseidon.Analysis.Utils where
 
 import           Control.Exception          (Exception)
-import           Control.Monad              (forM, when)
+import           Control.Monad              (forM)
 import           Data.Aeson                 ((.:))
 import           Data.Aeson.Key             (toString)
 import           Data.Aeson.KeyMap          (toList)
@@ -11,13 +11,10 @@ import           Data.Aeson.Types           (Object, Parser)
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
-import           Poseidon.EntitiesList      (EntitySpec (..),
-                                             PoseidonIndividual (..),
-                                             SelectionLevel2 (..),
+import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              SignedEntitiesList,
-                                             resolveEntityIndices)
-import           Poseidon.SecondaryTypes    (IndividualInfo (..))
-import           Poseidon.Utils             (PoseidonIO, logWarning)
+                                             isLatestInCollection,
+                                             indInfoConformsToEntitySpecs)
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
@@ -32,18 +29,13 @@ type GenomPos = (Chrom, Int)
 
 type GroupDef = (String, SignedEntitiesList)
 
--- redundant non-exported copy from Poseidon.EntitiesList
-meansIn :: SelectionLevel2 -> Bool
-meansIn ShouldBeIncluded                   = True
-meansIn ShouldBeIncludedWithHigherPriority = True
-meansIn ShouldNotBeIncluded                = False
-
 addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
 addGroupDefs groupDefs indInfoRows = do
     indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
+    let isLatest = isLatestInCollection indInfoRows indInfo
     let additionalGroupNames = do
             (groupName, signedEntityList) <- groupDefs
-            True <- return . meansIn $ indInfoConformsToEntitySpec signedEntityList indInfo
+            True <- return $ indInfoConformsToEntitySpecs indInfo isLatest signedEntityList
             return groupName
     return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
 
@@ -106,19 +98,6 @@ filterTransitions noTransitions = if noTransitions then
         ((ref == 'G') && (alt == 'A')) ||
         ((ref == 'C') && (alt == 'T')) ||
         ((ref == 'T') && (alt == 'C'))
-
--- a helper function to resolve entities and throw errors if unresolved duplicate individuals are found.
--- this could also go into poseidon-hs, actually, at least as long as we have this type of resolution algorithm.
-resolveEntityIndicesIO :: (EntitySpec a) => [a] -> [IndividualInfo] -> PoseidonIO [Int]
-resolveEntityIndicesIO entities xs = do
-    let (unresolvedMultiples, singleIndices) = resolveEntityIndices entities xs
-    (when . not . null) unresolvedMultiples $ do
-        logWarning "There are duplicated individuals:"
-        logWarning "In the likely case that this is not intended, specify specify via custom group definitions:"
-        mapM_ (\(_,i@(IndividualInfo n _ _),_) -> logWarning $ show (SimpleInd n) ++ " -> " ++ show (SpecificInd i)) $ concat unresolvedMultiples
-        logWarning "I will proceed including all duplicates"
-    return $ (map (\(i, _, _) -> i) . concat) unresolvedMultiples ++ singleIndices
-
 
 data XerxesException = PopConfigYamlException FilePath String
     | GroupDefException String
