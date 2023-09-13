@@ -13,8 +13,9 @@ import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
 import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              SignedEntitiesList,
-                                             isLatestInCollection,
-                                             indInfoConformsToEntitySpecs)
+                                             indInfoConformsToEntitySpecs,
+                                             isLatestInCollection)
+import           Poseidon.Janno             (JannoGenotypePloidy (..))
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
@@ -28,6 +29,8 @@ data JackknifeMode = JackknifePerN Int
 type GenomPos = (Chrom, Int)
 
 type GroupDef = (String, SignedEntitiesList)
+
+type PloidyVec = V.Vector JannoGenotypePloidy
 
 addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
 addGroupDefs groupDefs indInfoRows = do
@@ -44,21 +47,30 @@ parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, _) -> do
     entities <- obj .: key
     return (toString key, entities)
 
-computeAlleleCount :: GenoLine -> [Int] -> (Int, Int)
-computeAlleleCount line indices =
-    let nrNonMissing = length . filter (/=Missing) . map (line V.!) $ indices
+computeAlleleCount :: GenoLine -> PloidyVec -> [Int] -> (Int, Int)
+computeAlleleCount line ploidyVec indices =
+    let nrNonMissing = sum $ do
+            i <- indices
+            True <- return $ line V.! i /= Missing
+            case ploidyVec V.! i of
+                Haploid -> return 1 
+                Diploid -> return 2
         nrDerived = sum $ do
             i <- indices
             case line V.! i of
                 HomRef  -> return (0 :: Int)
-                Het     -> return 1
-                HomAlt  -> return 2
+                Het     -> case ploidyVec V.! i of
+                    Haploid -> error "haploid sample cannot be het"
+                    Diploid -> return 1
+                HomAlt  -> case ploidyVec V.! i of
+                    Haploid -> return 1
+                    Diploid -> return 2
                 Missing -> return 0
-    in  (nrDerived, 2 * nrNonMissing)
+    in  (nrDerived, nrNonMissing)
 
-computeAlleleFreq :: GenoLine -> [Int] -> Maybe Double
-computeAlleleFreq line indices =
-    let (nrDerivedHaps, nrNonMissingHaps) = computeAlleleCount line indices
+computeAlleleFreq :: GenoLine -> PloidyVec -> [Int] -> Maybe Double
+computeAlleleFreq line ploidyVec indices =
+    let (nrDerivedHaps, nrNonMissingHaps) = computeAlleleCount line ploidyVec indices
     in  if nrNonMissingHaps > 0
         then Just (fromIntegral nrDerivedHaps / fromIntegral nrNonMissingHaps)
         else Nothing

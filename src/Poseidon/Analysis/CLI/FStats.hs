@@ -15,7 +15,7 @@ import           Poseidon.Analysis.FStatsConfig (AscertainmentSpec (..),
                                                  FStatInput, FStatSpec (..),
                                                  FStatType (..), readFstatInput)
 import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
-                                                 addGroupDefs,
+                                                 PloidyVec, addGroupDefs,
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal,
@@ -39,22 +39,23 @@ import           Pipes                          (cat, for, yield, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
-import           Poseidon.EntityTypes         (PoseidonEntity (..),
+import           Poseidon.EntityTypes           (IndividualInfo (..),
+                                                 PoseidonEntity (..),
                                                  checkIfAllEntitiesExist,
                                                  determineRelevantPackages,
-                                                 underlyingEntity,
                                                  resolveUniqueEntityIndices,
-                                                 IndividualInfo (..))
+                                                 underlyingEntity)
+import           Poseidon.Janno                 (JannoRow(..), JannoGenotypePloidy(..), JannoRows(..))
 import           Poseidon.Package               (PackageReadOptions (..),
                                                  PoseidonPackage (..),
                                                  defaultPackageReadOptions,
                                                  getJointGenotypeData,
                                                  getJointIndividualInfo,
-                                                 readPoseidonPackageCollection)
+                                                 readPoseidonPackageCollection, getJointJanno)
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, envInputPlinkMode,
-                                                 envLogAction,
-                                                 logInfo, logWithEnv)
+                                                 envLogAction, logInfo,
+                                                 logWithEnv, logWarning)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -132,7 +133,7 @@ runFstats opts = do
     mapM_ (logInfo . summaryPrintFstats) statSpecs
     logA <- envLogAction
     inPlinkPopMode <- envInputPlinkMode
-    statsFold <- buildStatSpecsFold jointIndInfo statSpecs
+    statsFold <- buildStatSpecsFold relevantPackages statSpecs
     blocks <- liftIO $ catch (
         runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
@@ -227,12 +228,26 @@ type EntityIndicesLookup     = M.Map PoseidonEntity [Int]
 type EntityAlleleCountLookup = M.Map PoseidonEntity (Int, Int)
 type EntityAlleleFreqLookup  = M.Map PoseidonEntity (Maybe Double)
 
+makePloidyVec :: JannoRows -> PoseidonIO PloidyVec
+makePloidyVec (JannoRows jannoRows) = do
+    ploidyList <- forM jannoRows $ \jannoRow -> do    
+        case jGenotypePloidy jannoRow of
+            Nothing -> do
+                logWarning $ "no ploidy information for " ++ jPoseidonID jannoRow ++
+                    ". Assuming Diploid. Use the Janno-column \"Genotype_Ploidy\" to specify"
+                return Diploid
+            Just pl -> return pl
+    return $ V.fromList ploidyList
+
 -- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
-buildStatSpecsFold :: (MonadIO m) => [IndividualInfo] -> [FStatSpec] -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
-buildStatSpecsFold indInfo fStatSpecs = do
+buildStatSpecsFold :: (MonadIO m) => [PoseidonPackage] -> [FStatSpec] -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
+buildStatSpecsFold packages fStatSpecs = do
+    let indInfos = getJointIndividualInfo packages
+        jannoRows = getJointJanno packages
+    ploidyVec <- makePloidyVec jannoRows
     entityIndicesLookup <- do
         let collectedSpecs = collectStatSpecGroups fStatSpecs
-        entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfo | s <- collectedSpecs]
+        entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfos | s <- collectedSpecs]
         return . M.fromList . zip collectedSpecs $ entityIndices
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
@@ -240,18 +255,18 @@ buildStatSpecsFold indInfo fStatSpecs = do
                 F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
                 _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
-    return $ FoldM (step entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
+    return $ FoldM (step ploidyVec entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
   where
-    step :: (MonadIO m) => EntityIndicesLookup -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
-    step entIndLookup blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step :: (MonadIO m) => PloidyVec -> EntityIndicesLookup -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
+    step ploidyVec entIndLookup blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         -- this function is called for every SNP.
         startPos <- liftIO $ readIORef (accMaybeStartPos blockAccum)
         case startPos of
             Nothing -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
             Just _  -> return ()
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
-        let alleleCountLookupF = M.map (computeAlleleCount genoLine) entIndLookup
-            alleleFreqLookupF  = M.map (computeAlleleFreq  genoLine) entIndLookup
+        let alleleCountLookupF = M.map (computeAlleleCount genoLine ploidyVec) entIndLookup
+            alleleFreqLookupF  = M.map (computeAlleleFreq  genoLine ploidyVec) entIndLookup
         forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
