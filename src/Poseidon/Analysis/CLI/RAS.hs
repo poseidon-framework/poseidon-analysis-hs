@@ -32,7 +32,7 @@ import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
 import           Poseidon.EntityTypes       (EntitiesList, PoseidonEntity (..),
-                                              underlyingEntity,
+                                              underlyingEntity, IndividualInfo (..),
                                               resolveUniqueEntityIndices,
                                               determineRelevantPackages,
                                               checkIfAllEntitiesExist)
@@ -249,16 +249,17 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
     rightI <- sequence [resolveUniqueEntityIndices [r] indInfos | r <- popRights]
     let nL = length popLefts
         nR = length popRights
-    return $ FoldM (step ploidyVec outgroupI leftI rightI) (initialise nL nR) extract
+    let indivNames = map indInfoName indInfos
+    return $ FoldM (step ploidyVec indivNames outgroupI leftI rightI) (initialise nL nR) extract
   where
-    step :: (MonadIO m) => PloidyVec -> [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
+    step :: (MonadIO m) => PloidyVec -> [String] -> [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
         (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
-    step ploidyVec outgroupI leftI rightI (maybeStartPos, _, counts, vals) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step ploidyVec indivNames outgroupI leftI rightI (maybeStartPos, _, counts, vals) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         let newStartPos = case maybeStartPos of
                 Nothing       -> Just (c, p)
                 Just (c', p') -> Just (c', p')
         let newEndPos = Just (c, p)
-            rAlleleCountPairs = map (computeAlleleCount genoLine ploidyVec) rightI
+            rAlleleCountPairs = map (computeAlleleCount genoLine ploidyVec indivNames) rightI
             rTotalDerived = sum . map fst $ rAlleleCountPairs
             rTotalHaps = 2 * sum (map length rightI)
             rTotalFreq = (fromIntegral rTotalDerived / fromIntegral rTotalHaps :: Double)
@@ -268,7 +269,7 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
                 if null outgroupI
                 then Just (rTotalFreq > 0.5) -- repolarise to minor freq if no ougroup is set
                 else
-                    case computeAlleleCount genoLine ploidyVec outgroupI of
+                    case computeAlleleCount genoLine ploidyVec indivNames outgroupI of
                         (_, 0) -> Nothing -- outgroup missing
                         (ogNonRef, ogNonMissing) ->
                             if ogNonRef == 0 then Just False else -- outgroup is fixed at reference allele
@@ -296,11 +297,11 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
                         -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                         -- main loop
                         let nR = length popRights
-                            leftFreqsNonRef = map (computeAlleleFreq genoLine ploidyVec) leftI
+                            leftFreqsNonRef = map (computeAlleleFreq genoLine ploidyVec indivNames) leftI
                             leftFreqs = if polarise then map (fmap (1.0 - )) leftFreqsNonRef else leftFreqsNonRef
                             rightFreqs = do
                                 r <- rightI
-                                let nrDerived = fst $ computeAlleleCount genoLine ploidyVec r
+                                let nrDerived = fst $ computeAlleleCount genoLine ploidyVec indivNames r
                                 let n = 2 * length r
                                 if polarise then
                                     return $ 1.0 - (fromIntegral nrDerived / fromIntegral n)

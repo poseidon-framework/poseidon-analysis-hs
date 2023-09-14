@@ -58,8 +58,8 @@ parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, _) -> do
     entities <- obj .: key
     return (toString key, entities)
 
-computeAlleleCount :: GenoLine -> PloidyVec -> [Int] -> (Int, Int)
-computeAlleleCount line ploidyVec indices =
+computeAlleleCount :: GenoLine -> PloidyVec -> [String] -> [Int] -> (Int, Int)
+computeAlleleCount line ploidyVec indivNames indices =
     let nrNonMissing = sum $ do
             i <- indices
             True <- return $ line V.! i /= Missing
@@ -72,7 +72,7 @@ computeAlleleCount line ploidyVec indices =
                 HomRef  -> return (0 :: Int)
                 Het     -> case ploidyVec V.! i of
                     Haploid -> throw . PoseidonGenotypeException $
-                        "Sample with index " ++ show i ++ " is heterozygous, but should be haploid. Check if the Ploidy-information in the Janno-file is correct"
+                        "Sample " ++ indivNames !! i ++ " is heterozygous, but should be haploid. Check if the Ploidy-information in the Janno-file is correct"
                     Diploid -> return 1
                 HomAlt  -> case ploidyVec V.! i of
                     Haploid -> return 1
@@ -80,9 +80,9 @@ computeAlleleCount line ploidyVec indices =
                 Missing -> return 0
     in  (nrDerived, nrNonMissing)
 
-computeAlleleFreq :: GenoLine -> PloidyVec -> [Int] -> Maybe Double
-computeAlleleFreq line ploidyVec indices =
-    let (nrDerivedHaps, nrNonMissingHaps) = computeAlleleCount line ploidyVec indices
+computeAlleleFreq :: GenoLine -> PloidyVec -> [String] -> [Int] -> Maybe Double
+computeAlleleFreq line ploidyVec indivNames indices =
+    let (nrDerivedHaps, nrNonMissingHaps) = computeAlleleCount line ploidyVec indivNames indices
     in  if nrNonMissingHaps > 0
         then Just (fromIntegral nrDerivedHaps / fromIntegral nrNonMissingHaps)
         else Nothing

@@ -8,7 +8,7 @@ fstats:
   a: ["French", "Spanish"]
   b: ["Han", "CEU2"]
   # Ascertainment is optional
-- type: F3
+- type: F3vanilla
   a: ["French", "Spanish", "Mbuti"]
   b: ["Han", "CEU2"]
   c: ["<Chimp.REF>"]

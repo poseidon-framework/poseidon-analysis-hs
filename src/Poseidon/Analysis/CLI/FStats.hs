@@ -44,7 +44,8 @@ import           Poseidon.EntityTypes           (PoseidonEntity (..),
                                                  checkIfAllEntitiesExist,
                                                  determineRelevantPackages,
                                                  resolveUniqueEntityIndices,
-                                                 underlyingEntity)
+                                                 underlyingEntity,
+                                                 IndividualInfo(..))
 import           Poseidon.Package               (PackageReadOptions (..),
                                                  PoseidonPackage (..),
                                                  defaultPackageReadOptions,
@@ -228,6 +229,7 @@ type EntityAlleleFreqLookup  = M.Map PoseidonEntity (Maybe Double)
 buildStatSpecsFold :: (MonadIO m) => [PoseidonPackage] -> [FStatSpec] -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold packages fStatSpecs = do
     let indInfos = getJointIndividualInfo packages
+        indivNames = map indInfoName indInfos
     ploidyVec <- makePloidyVec . getJointJanno $ packages
     entityIndicesLookup <- do
         let collectedSpecs = collectStatSpecGroups fStatSpecs
@@ -239,18 +241,18 @@ buildStatSpecsFold packages fStatSpecs = do
                 F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
                 _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
-    return $ FoldM (step ploidyVec entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
+    return $ FoldM (step ploidyVec indivNames entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
   where
-    step :: (MonadIO m) => PloidyVec -> EntityIndicesLookup -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
-    step ploidyVec entIndLookup blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step :: (MonadIO m) => PloidyVec -> [String] -> EntityIndicesLookup -> BlockAccumulator -> () -> (EigenstratSnpEntry, GenoLine) -> m ()
+    step ploidyVec indivNames entIndLookup blockAccum _ (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         -- this function is called for every SNP.
         startPos <- liftIO $ readIORef (accMaybeStartPos blockAccum)
         case startPos of
             Nothing -> liftIO $ writeIORef (accMaybeStartPos blockAccum) (Just (c, p))
             Just _  -> return ()
         liftIO $ writeIORef (accMaybeEndPos blockAccum) (Just (c, p))
-        let alleleCountLookupF = M.map (computeAlleleCount genoLine ploidyVec) entIndLookup
-            alleleFreqLookupF  = M.map (computeAlleleFreq  genoLine ploidyVec) entIndLookup
+        let alleleCountLookupF = M.map (computeAlleleCount genoLine ploidyVec indivNames) entIndLookup
+            alleleFreqLookupF  = M.map (computeAlleleFreq  genoLine ploidyVec indivNames) entIndLookup
         forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.

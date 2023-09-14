@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-stack run xerxes -- fstats --statFile fstats.txt -d ../../../published_data/2012_PattersonGenetics -f testTable.txt --blockTableFile testBlockTable.txt
+# stack run xerxes -- fstats --statFile fstats.txt -d ../../../community-archive/2012_PattersonGenetics -f testTable.txt --blockTableFile testBlockTable.txt
 
 # .-----------.-----------.---------------.--------.-------.---------.------------.-----------.---------------------.
 # | Statistic |     a     |       b       |   c    |   d   | NrSites |  Estimate  |  StdErr   |       Z score       |
@@ -12,5 +12,5 @@ stack run xerxes -- fstats --statFile fstats.txt -d ../../../published_data/2012
 # | F4        | Sardinian | French        | Pima   | Mbuti | 593124  | -1.4384e-3 | 1.1525e-4 | -12.481084899924868 |
 # '-----------'-----------'---------------'--------'-------'---------'------------'-----------'---------------------'
 
-# stack run xerxes -- fstats --statConfig config.yaml -d ../../../published_data --maxSnps 100000
+stack run xerxes -- fstats --statConfig config.yaml -d ../../../community-archive --maxSnps 100000 -f testTable2.txt --blockTableFile testBlockTable2.txt
 
