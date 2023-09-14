@@ -2,7 +2,7 @@
 
 module Poseidon.Analysis.Utils where
 
-import           Control.Exception          (Exception)
+import           Control.Exception          (Exception, throw)
 import           Control.Monad              (forM)
 import           Data.Aeson                 ((.:))
 import           Data.Aeson.Key             (toString)
@@ -17,9 +17,11 @@ import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              isLatestInCollection,
                                              makePacNameAndVersion)
 import           Poseidon.Janno             (JannoGenotypePloidy (..),
-                                             JannoRows (..), JannoRow(..), JannoList(..), getJannoList)
-import Poseidon.Package (PoseidonPackage(..), getJannoRowsFromPac)
-import           Poseidon.Utils             (PoseidonIO, logWarning)
+                                             JannoList (..), JannoRow (..),
+                                             JannoRows (..), getJannoList)
+import           Poseidon.Package           (PoseidonPackage (..),
+                                             getJannoRowsFromPac)
+import           Poseidon.Utils             (PoseidonIO, logWarning, PoseidonException(..))
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
@@ -69,7 +71,8 @@ computeAlleleCount line ploidyVec indices =
             case line V.! i of
                 HomRef  -> return (0 :: Int)
                 Het     -> case ploidyVec V.! i of
-                    Haploid -> error "haploid sample cannot be het"
+                    Haploid -> throw . PoseidonGenotypeException $
+                        "Sample with index " ++ show i ++ " is heterozygous, but should be haploid. Check if the Ploidy-information in the Janno-file is correct"
                     Diploid -> return 1
                 HomAlt  -> case ploidyVec V.! i of
                     Haploid -> return 1
