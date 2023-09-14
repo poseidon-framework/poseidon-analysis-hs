@@ -14,8 +14,12 @@ import qualified Pipes.Prelude              as P
 import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              SignedEntitiesList,
                                              indInfoConformsToEntitySpecs,
-                                             isLatestInCollection)
-import           Poseidon.Janno             (JannoGenotypePloidy (..))
+                                             isLatestInCollection,
+                                             makePacNameAndVersion)
+import           Poseidon.Janno             (JannoGenotypePloidy (..),
+                                             JannoRows (..), JannoRow(..), JannoList(..), getJannoList)
+import Poseidon.Package (PoseidonPackage(..), getJannoRowsFromPac)
+import           Poseidon.Utils             (PoseidonIO, logWarning)
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
@@ -32,15 +36,20 @@ type GroupDef = (String, SignedEntitiesList)
 
 type PloidyVec = V.Vector JannoGenotypePloidy
 
-addGroupDefs :: [GroupDef] -> [IndividualInfo] -> [IndividualInfo]
-addGroupDefs groupDefs indInfoRows = do
-    indInfo@(IndividualInfo _ groupNames _) <- indInfoRows
-    let isLatest = isLatestInCollection indInfoRows indInfo
-    let additionalGroupNames = do
-            (groupName, signedEntityList) <- groupDefs
-            True <- return $ indInfoConformsToEntitySpecs indInfo isLatest signedEntityList
-            return groupName
-    return $ indInfo {indInfoGroups = groupNames ++ additionalGroupNames}
+addGroupDefs :: [GroupDef] -> [PoseidonPackage] -> [PoseidonPackage]
+addGroupDefs groupDefs pacs = do -- this loops through all input packages
+    pac <- pacs
+    let isLatest = isLatestInCollection pacs pac
+    let newJanno = JannoRows $ do -- this loops through the janno-file
+            jannoRow <- getJannoRowsFromPac pac
+            let oldGroupNames = (getJannoList . jGroupName) jannoRow
+            let additionalGroupNames = do -- this loops through each new group definition and returns those group names that apply to this janno-row
+                    (groupName, signedEntityList) <- groupDefs
+                    let indInfo = IndividualInfo (jPoseidonID jannoRow) oldGroupNames (makePacNameAndVersion pac)
+                    True <- return $ indInfoConformsToEntitySpecs indInfo isLatest signedEntityList -- this checks whether a new group-def applies to this janno-row
+                    return groupName -- only returns if the previous row pattern-matched, i.e. if the group applies
+            return $ jannoRow {jGroupName = JannoList (oldGroupNames ++ additionalGroupNames)} -- returns a new janno-row with the new group definitions
+    return $ pac {posPacJanno = newJanno} -- returns a new package with the new janno
 
 parseGroupDefsFromJSON :: Object -> Parser [GroupDef]
 parseGroupDefsFromJSON obj = forM (toList obj) $ \(key, _) -> do
@@ -53,7 +62,7 @@ computeAlleleCount line ploidyVec indices =
             i <- indices
             True <- return $ line V.! i /= Missing
             case ploidyVec V.! i of
-                Haploid -> return 1 
+                Haploid -> return 1
                 Diploid -> return 2
         nrDerived = sum $ do
             i <- indices
@@ -118,3 +127,13 @@ data XerxesException = PopConfigYamlException FilePath String
 
 instance Exception XerxesException
 
+makePloidyVec :: JannoRows -> PoseidonIO PloidyVec
+makePloidyVec (JannoRows jannoRows) = do
+    ploidyList <- forM jannoRows $ \jannoRow -> do
+        case jGenotypePloidy jannoRow of
+            Nothing -> do
+                logWarning $ "no ploidy information for " ++ jPoseidonID jannoRow ++
+                    ". Assuming Diploid. Use the Janno-column \"Genotype_Ploidy\" to specify"
+                return Diploid
+            Just pl -> return pl
+    return $ V.fromList ploidyList

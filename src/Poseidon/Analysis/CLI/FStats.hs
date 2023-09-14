@@ -19,7 +19,8 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal,
-                                                 filterTransitions)
+                                                 filterTransitions,
+                                                 makePloidyVec)
 
 import           Control.Exception              (catch, throwIO)
 import           Control.Foldl                  (FoldM (..), impurely, list,
@@ -39,13 +40,11 @@ import           Pipes                          (cat, for, yield, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
-import           Poseidon.EntityTypes           (IndividualInfo (..),
-                                                 PoseidonEntity (..),
+import           Poseidon.EntityTypes           (PoseidonEntity (..),
                                                  checkIfAllEntitiesExist,
                                                  determineRelevantPackages,
                                                  resolveUniqueEntityIndices,
                                                  underlyingEntity)
-import           Poseidon.Janno                 (JannoRow(..), JannoGenotypePloidy(..), JannoRows(..))
 import           Poseidon.Package               (PackageReadOptions (..),
                                                  PoseidonPackage (..),
                                                  defaultPackageReadOptions,
@@ -55,7 +54,7 @@ import           Poseidon.Package               (PackageReadOptions (..),
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, envInputPlinkMode,
                                                  envLogAction, logInfo,
-                                                 logWithEnv, logWarning)
+                                                 logWithEnv)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -109,25 +108,22 @@ runFstats opts = do
     (groupDefs, statSpecs) <- readFstatInput (_foStatInput opts)
     unless (null groupDefs) . logInfo $ "Found group definitions: " ++ show groupDefs
 
+    -- ------- CHECKING WHETHER ENTITIES EXIST -----------
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
-    let collectedStats = collectStatSpecGroups statSpecs
-    let allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++ collectedStats) \\ newGroups
+        collectedStats = collectStatSpecGroups statSpecs
+        -- new groups can be used on the right hand side of further group definitions, that's why we explicitly exclude them here in the end of the expression
+        allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++ collectedStats) \\ newGroups
+    checkIfAllEntitiesExist allEntities . getJointIndividualInfo $ allPackages
 
-    let jointIndInfoAll = getJointIndividualInfo allPackages
-    checkIfAllEntitiesExist allEntities jointIndInfoAll
-
-    -- annotate all individuals with the new adhoc-group definitions where necessary
-    let jointIndInfoWithNewGroups = addGroupDefs groupDefs jointIndInfoAll
+    -- annotate all individuals in all packages with the new adhoc-group definitions where necessary
+    let packagesWithNewGroups = addGroupDefs groupDefs allPackages
 
     -- select only the packages needed for the statistics to be computed
-    let relevantPackageNames = determineRelevantPackages collectedStats jointIndInfoWithNewGroups
-    let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) allPackages
+    let relevantPackageNames = determineRelevantPackages collectedStats . getJointIndividualInfo $ packagesWithNewGroups
+    let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) packagesWithNewGroups
     logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
     mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
-
-    -- annotate again the individuals in the selected packages with the adhoc-group defs from the config
-    let jointIndInfo = addGroupDefs groupDefs . getJointIndividualInfo $ relevantPackages
 
     logInfo "Computing stats:"
     mapM_ (logInfo . summaryPrintFstats) statSpecs
@@ -228,23 +224,11 @@ type EntityIndicesLookup     = M.Map PoseidonEntity [Int]
 type EntityAlleleCountLookup = M.Map PoseidonEntity (Int, Int)
 type EntityAlleleFreqLookup  = M.Map PoseidonEntity (Maybe Double)
 
-makePloidyVec :: JannoRows -> PoseidonIO PloidyVec
-makePloidyVec (JannoRows jannoRows) = do
-    ploidyList <- forM jannoRows $ \jannoRow -> do    
-        case jGenotypePloidy jannoRow of
-            Nothing -> do
-                logWarning $ "no ploidy information for " ++ jPoseidonID jannoRow ++
-                    ". Assuming Diploid. Use the Janno-column \"Genotype_Ploidy\" to specify"
-                return Diploid
-            Just pl -> return pl
-    return $ V.fromList ploidyList
-
 -- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
 buildStatSpecsFold :: (MonadIO m) => [PoseidonPackage] -> [FStatSpec] -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold packages fStatSpecs = do
     let indInfos = getJointIndividualInfo packages
-        jannoRows = getJointJanno packages
-    ploidyVec <- makePloidyVec jannoRows
+    ploidyVec <- makePloidyVec . getJointJanno $ packages
     entityIndicesLookup <- do
         let collectedSpecs = collectStatSpecGroups fStatSpecs
         entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfos | s <- collectedSpecs]
