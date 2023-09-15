@@ -31,6 +31,7 @@ import           Data.IORef                     (IORef, modifyIORef', newIORef,
                                                  readIORef, writeIORef)
 import           Data.List                      (intercalate, nub, (\\))
 import qualified Data.Map                       as M
+import           Data.Maybe                     (fromMaybe)
 import qualified Data.Vector                    as V
 import qualified Data.Vector.Unboxed            as VU
 import qualified Data.Vector.Unboxed.Mutable    as VUM
@@ -40,18 +41,19 @@ import           Pipes                          (cat, for, yield, (>->))
 import           Pipes.Group                    (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude                  as P
 import           Pipes.Safe                     (runSafeT)
-import           Poseidon.EntityTypes           (PoseidonEntity (..),
+import           Poseidon.EntityTypes           (IndividualInfo (..),
+                                                 PoseidonEntity (..),
                                                  checkIfAllEntitiesExist,
                                                  determineRelevantPackages,
                                                  resolveUniqueEntityIndices,
-                                                 underlyingEntity,
-                                                 IndividualInfo(..))
+                                                 underlyingEntity)
 import           Poseidon.Package               (PackageReadOptions (..),
                                                  PoseidonPackage (..),
                                                  defaultPackageReadOptions,
                                                  getJointGenotypeData,
                                                  getJointIndividualInfo,
-                                                 readPoseidonPackageCollection, getJointJanno)
+                                                 getJointJanno,
+                                                 readPoseidonPackageCollection)
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, envInputPlinkMode,
                                                  envLogAction, logInfo,
@@ -256,10 +258,8 @@ buildStatSpecsFold packages fStatSpecs = do
         forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
-            forM_ (zip [0..] maybeAccValues) $ \(j, maybeAccVal) -> do
-                case maybeAccVal of
-                    Nothing -> return ()
-                    Just x -> liftIO $ VUM.modify (accValues blockAccum V.! i) (+x) j -- add the value to the respective accumulator.
+            forM_ (zip [0..] maybeAccValues) $ \(j, x) ->
+                liftIO $ VUM.modify (accValues blockAccum V.! i) (+x) j -- add the value to the respective accumulator.
         -- counts the number of SNPs in a block, and ignores missing data. Missing data is considered within each accumulator.
         liftIO $ modifyIORef' (accCount blockAccum) (+1)
         return ()
@@ -280,14 +280,14 @@ buildStatSpecsFold packages fStatSpecs = do
             (Just startPos, Just endPos) -> return $ BlockData startPos endPos count statVals
             _ -> error "should never happen"
 
-computeFStatAccumulators :: FStatSpec -> EntityAlleleCountLookup -> EntityAlleleFreqLookup -> [Maybe Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
+computeFStatAccumulators :: FStatSpec -> EntityAlleleCountLookup -> EntityAlleleFreqLookup -> [Double] -- returns a number of accumulated variables, in most cases a value and a normalising count,
 -- but in case of F3, for example, also a second accumulator and its normaliser for capturing the heterozygosity
 computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFreqF =
     let caf = (alleleFreqF M.!) -- this returns Nothing if missing data
         cac e = case alleleCountF M.! e of -- this also returns Nothing if missing data.
             (_, 0) -> Nothing
             x      -> Just x
-        ascCond = case maybeAsc of
+        ascCond = fromMaybe False $ case maybeAsc of
             Nothing -> return True
             Just (AscertainmentSpec maybeOg ascRef lo hi) -> do -- Maybe Monad - if any of the required allele frequencies are missing, this returns a Nothing
                 ascFreq <- case maybeOg of
@@ -300,25 +300,27 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
                         if ogNonRef == 0 then return x else
                             if ogNonRef == ogNonMiss then return (1.0 - x) else Nothing
                 return $ ascFreq >= lo && ascFreq <= hi
-        applyAsc x = do -- Maybe Monad
-            cond <- ascCond
-            if cond then return x else return 0.0 -- set statistic result to 0.0 if ascertainment is False
-    in  case (fType, slots) of
-            (F4,         [a, b, c, d]) -> retWithNormAcc $ (computeF4         <$> caf a <*> caf b <*> caf c <*> caf d) >>= applyAsc
-            (F3vanilla,  [a, b, c])    -> retWithNormAcc $ (computeF3vanilla  <$> caf a <*> caf b <*> caf c)           >>= applyAsc
-            (F2vanilla,  [a, b])       -> retWithNormAcc $ (computeF2vanilla  <$> caf a <*> caf b)                     >>= applyAsc
-            (PWM,        [a, b])       -> retWithNormAcc $ (computePWM        <$> caf a <*> caf b)                     >>= applyAsc
-            (Het,        [a])          -> retWithNormAcc $ (computeHet        <$> cac a)                               >>= applyAsc
-            (F2,         [a, b])       -> retWithNormAcc $ (computeF2         <$> cac a <*> cac b)                     >>= applyAsc
-            (FSTvanilla, [a, b])       -> retWithNormAcc $ (computeFSTvanilla    (caf a)   (caf b))                    >>= applyAsc
-            (FST,        [a, b])       -> retWithNormAcc $ (computeFST           (cac a)   (cac b))                    >>= applyAsc
-            (F3,         [a, b, c])    ->
-                retWithNormAcc ((computeF3noNorm <$> caf a <*> caf b <*> cac c) >>= applyAsc) ++
-                retWithNormAcc ((computeHet <$> cac c) >>= applyAsc)
-            _ -> error "should never happen"
+    in  if ascCond then
+            case (fType, slots) of
+                (F4,         [a, b, c, d]) -> retWithNormAcc $ computeF4         <$> caf a <*> caf b <*> caf c <*> caf d
+                (F3vanilla,  [a, b, c])    -> retWithNormAcc $ computeF3vanilla  <$> caf a <*> caf b <*> caf c
+                (F2vanilla,  [a, b])       -> retWithNormAcc $ computeF2vanilla  <$> caf a <*> caf b
+                (PWM,        [a, b])       -> retWithNormAcc $ computePWM        <$> caf a <*> caf b
+                (Het,        [a])          -> retWithNormAcc $ computeHet        <$> cac a
+                (F2,         [a, b])       -> retWithNormAcc $ computeF2         <$> cac a <*> cac b
+                (FSTvanilla, [a, b])       -> retWithNormAcc $  computeFSTvanilla    (caf a)   (caf b)
+                (FST,        [a, b])       -> retWithNormAcc $  computeFST           (cac a)   (cac b)
+                (F3,         [a, b, c])    ->
+                    retWithNormAcc (computeF3noNorm <$> caf a <*> caf b <*> cac c) ++
+                    retWithNormAcc (computeHet <$> cac c)
+                _ -> error "should never happen"
+        else
+            case fType of
+                F3 -> [0.0, 0.0, 0.0, 0.0]
+                _  -> [0.0, 0.0]
   where
-    retWithNormAcc (Just x) = [Just x, Just 1.0]
-    retWithNormAcc Nothing  = [Nothing, Nothing]
+    retWithNormAcc (Just x) = [x, 1.0]
+    retWithNormAcc Nothing  = [0.0, 0.0]
     -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
     computeF4         a b c d = (a - b) * (c - d)
     computeF3vanilla  a b c   = (c - a) * (c - b)

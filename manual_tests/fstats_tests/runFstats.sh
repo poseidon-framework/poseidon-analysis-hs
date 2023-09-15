@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# stack run xerxes -- fstats --statFile fstats.txt -d ../../../community-archive/2012_PattersonGenetics -f testTable.txt --blockTableFile testBlockTable.txt
+stack run xerxes -- fstats --statFile fstats.txt -d ../../../community-archive/2012_PattersonGenetics -f testTable.txt --blockTableFile testBlockTable.txt
 
 # .-----------.-----------.---------------.--------.-------.---------.------------.-----------.---------------------.
 # | Statistic |     a     |       b       |   c    |   d   | NrSites |  Estimate  |  StdErr   |       Z score       |

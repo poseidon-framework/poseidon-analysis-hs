@@ -47,17 +47,18 @@ testAddGroupDefs = do
 testComputeAlleleCount :: Spec
 testComputeAlleleCount =
     describe "computeAlleleCount" $ do
+        let indivNames = ["Ind" ++ show i | i <- [(0 :: Int)..4]]
         it "should correctly sum up alleles in case of diploids/haploids" $ do
-            let genoLine = V.fromList [HomRef, HomRef, HomAlt, HomAlt, HomAlt]
             let ploidyVec = V.fromList [Haploid, Haploid, Haploid, Diploid, Diploid]
-            computeAlleleCount genoLine ploidyVec [0, 1, 2, 3, 4] `shouldBe` (5, 7)
+            let genoLine = V.fromList [HomRef, HomRef, HomAlt, HomAlt, HomAlt]
+            computeAlleleCount genoLine ploidyVec indivNames [0, 1, 2, 3, 4] `shouldBe` (5, 7)
             let ploidyVec2 = V.fromList [Haploid, Haploid, Haploid, Haploid, Haploid]
-            computeAlleleCount genoLine ploidyVec2 [0, 1, 2, 3, 4] `shouldBe` (3, 5)
+            computeAlleleCount genoLine ploidyVec2 indivNames [0, 1, 2, 3, 4] `shouldBe` (3, 5)
         it "should throw if Hets are encountered with Haploid ploidy" $ do
             let genoLine = V.fromList [Het, HomRef, HomAlt, HomAlt, HomAlt]
             let ploidyVec = V.fromList [Haploid, Haploid, Haploid, Diploid, Diploid]
-            (print (computeAlleleCount genoLine ploidyVec [0, 1, 2, 3, 4])) `shouldThrow` isGenotypeException
+            (print (computeAlleleCount genoLine ploidyVec indivNames [0, 1, 2, 3, 4])) `shouldThrow` isGenotypeException
   where
-    isGenotypeException (PoseidonGenotypeException "Sample with index 0 is heterozygous, but should be haploid. Check if the Ploidy-information in the Janno-file is correct") = True
+    isGenotypeException (PoseidonGenotypeException "Sample Ind0 is heterozygous, but should be haploid. Check if the Ploidy-information in the Janno-file is correct") = True
     isGenotypeException _ = False
             
