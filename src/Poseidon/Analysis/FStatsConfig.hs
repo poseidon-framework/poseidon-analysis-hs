@@ -26,6 +26,7 @@ import           Text.Read               (readMaybe)
 -- | A datatype to represent different types of F-Statistics
 data FStatType = F4
     | F3
+    | F3star
     | F2
     | PWM
     | Het
@@ -93,6 +94,7 @@ instance FromJSON FStatType where
     parseJSON = withText "FStatType" $ \t -> case t of
         "F4"         -> return F4
         "F3"         -> return F3
+        "F3star"     -> return F3star
         "F2"         -> return F2
         "FST"        -> return FST
         "PWM"        -> return PWM
@@ -193,6 +195,7 @@ fstatSlotLength :: FStatType -> Int
 fstatSlotLength fStatType = case fStatType of
     F4         -> 4
     F3         -> 3
+    F3star     -> 3
     F2         -> 2
     FST        -> 2
     PWM        -> 2

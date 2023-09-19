@@ -149,7 +149,7 @@ parseFstatInput = OP.some (parseStatSpecsDirect <|> parseYamlInput <|> parseSimp
   where
     parseStatSpecsDirect = OP.option (FStatInputDirect <$> OP.eitherReader readStatSpecString) (OP.long "stat" <>
         OP.help "Specify a summary statistic to be computed. Can be given multiple times. Possible options are: F4(a, \
-            \b, c, d), F3(a, b, c), F2(a, b), PWM(a, b), FST(a, b), Het(a) and some more special options \
+            \b, c, d), F3(a, b, c), F3star(a, b, c), F2(a, b), PWM(a, b), FST(a, b), Het(a) and some more special options \
             \described at https://poseidon-framework.github.io/#/xerxes?id=fstats-command. Valid entities used in the \
             \statistics are group names as specified in the *.fam, *.ind or *.janno failes, individual names using the \
             \syntax \"<Ind_name>\", so enclosing them in angular brackets, and entire packages like \"*Package1*\" using the \

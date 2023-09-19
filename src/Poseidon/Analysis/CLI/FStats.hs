@@ -240,8 +240,8 @@ buildStatSpecsFold packages fStatSpecs = do
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
             case fType of
-                F3 -> liftIO $ VUM.replicate 4 0.0 --only F3 has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
-                _  -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
+                F3star -> liftIO $ VUM.replicate 4 0.0 --only F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                _      -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
     return $ FoldM (step ploidyVec indivNames entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
   where
@@ -304,13 +304,14 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
             case (fType, slots) of
                 (F4,         [a, b, c, d]) -> retWithNormAcc $ computeF4         <$> caf a <*> caf b <*> caf c <*> caf d
                 (F3vanilla,  [a, b, c])    -> retWithNormAcc $ computeF3vanilla  <$> caf a <*> caf b <*> caf c
+                (F3,         [a, b, c])    -> retWithNormAcc $ computeF3noNorm   <$> caf a <*> caf b <*> cac c
                 (F2vanilla,  [a, b])       -> retWithNormAcc $ computeF2vanilla  <$> caf a <*> caf b
                 (PWM,        [a, b])       -> retWithNormAcc $ computePWM        <$> caf a <*> caf b
                 (Het,        [a])          -> retWithNormAcc $ computeHet        <$> cac a
                 (F2,         [a, b])       -> retWithNormAcc $ computeF2         <$> cac a <*> cac b
                 (FSTvanilla, [a, b])       -> retWithNormAcc $  computeFSTvanilla    (caf a)   (caf b)
                 (FST,        [a, b])       -> retWithNormAcc $  computeFST           (cac a)   (cac b)
-                (F3,         [a, b, c])    ->
+                (F3star,         [a, b, c])    ->
                     retWithNormAcc (computeF3noNorm <$> caf a <*> caf b <*> cac c) ++
                     retWithNormAcc (computeHet <$> cac c)
                 _ -> error "should never happen"
@@ -372,7 +373,7 @@ processBlocks statSpecs blocks = do
     let block_weights = map (fromIntegral . blockSiteCount) blocks
     (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
     case fType of
-        F3 ->
+        F3star ->
             let numerator_values = map ((!!0) . (!!i) . blockStatVal) blocks
                 numerator_norm = map ((!!1) . (!!i) . blockStatVal) blocks
                 denominator_values = map ((!!2) . (!!i) . blockStatVal) blocks
