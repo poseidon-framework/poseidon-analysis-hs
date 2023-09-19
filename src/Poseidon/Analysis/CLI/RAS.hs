@@ -4,14 +4,12 @@ module Poseidon.Analysis.CLI.RAS where
 
 import           Poseidon.Analysis.RASconfig (PopConfig (..))
 import           Poseidon.Analysis.Utils     (GenomPos, JackknifeMode (..),
-                                              XerxesException (..),
+                                              PloidyVec, XerxesException (..),
                                               addGroupDefs, computeAlleleCount,
                                               computeAlleleFreq,
                                               computeJackknifeAdditive,
                                               computeJackknifeOriginal,
-                                              filterTransitions,
-                                              makePloidyVec,
-                                              PloidyVec)
+                                              filterTransitions, makePloidyVec)
 
 import           Control.Exception           (catch, throwIO)
 import           Control.Foldl               (FoldM (..), impurely, list,
@@ -31,22 +29,23 @@ import           Pipes                       (cat, (>->))
 import           Pipes.Group                 (chunksOf, foldsM, groupsBy)
 import qualified Pipes.Prelude               as P
 import           Pipes.Safe                  (runSafeT)
-import           Poseidon.EntityTypes       (EntitiesList, PoseidonEntity (..),
-                                              underlyingEntity, IndividualInfo (..),
-                                              resolveUniqueEntityIndices,
+import           Poseidon.EntityTypes        (EntitiesList, IndividualInfo (..),
+                                              PoseidonEntity (..),
+                                              checkIfAllEntitiesExist,
                                               determineRelevantPackages,
-                                              checkIfAllEntitiesExist)
+                                              resolveUniqueEntityIndices,
+                                              underlyingEntity)
+import           Poseidon.Janno              (JannoGenotypePloidy (..))
 import           Poseidon.Package            (PackageReadOptions (..),
                                               PoseidonPackage (..),
                                               defaultPackageReadOptions,
                                               getJointGenotypeData,
                                               getJointIndividualInfo,
-                                              readPoseidonPackageCollection,
-                                              getJointJanno)
+                                              getJointJanno,
+                                              readPoseidonPackageCollection)
 import           Poseidon.Utils              (PoseidonException (..),
                                               PoseidonIO, envInputPlinkMode,
-                                              envLogAction, logInfo,
-                                              logWithEnv)
+                                              envLogAction, logInfo, logWithEnv)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
@@ -83,6 +82,13 @@ data BlockData = BlockData
     , blockVals      :: [[Double]]
     }
     deriving (Show)
+
+data BlockAccumulator = BlockAccumulator
+    { blockAccStart     :: Maybe GenomPos
+    , blockAccEnd       :: Maybe GenomPos
+    , blockAccSiteCount :: VUM.IOVector Int
+    , blockAccVals      :: VUM.IOVector Double
+    }
 
 runRAS :: RASOptions -> PoseidonIO ()
 runRAS rasOpts = do
@@ -252,16 +258,21 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
     let indivNames = map indInfoName indInfos
     return $ FoldM (step ploidyVec indivNames outgroupI leftI rightI) (initialise nL nR) extract
   where
-    step :: (MonadIO m) => PloidyVec -> [String] -> [Int] -> [[Int]] -> [[Int]] -> (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
-        (EigenstratSnpEntry, GenoLine) -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
-    step ploidyVec indivNames outgroupI leftI rightI (maybeStartPos, _, counts, vals) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
+    step :: (MonadIO m) => PloidyVec -> [String] -> [Int] -> [[Int]] -> [[Int]] -> BlockAccumulator ->
+        (EigenstratSnpEntry, GenoLine) -> m BlockAccumulator
+    step ploidyVec indivNames outgroupI leftI rightI (BlockAccumulator maybeStartPos _ counts vals) (EigenstratSnpEntry c p _ _ _ _, genoLine) = do
         let newStartPos = case maybeStartPos of
                 Nothing       -> Just (c, p)
                 Just (c', p') -> Just (c', p')
         let newEndPos = Just (c, p)
             rAlleleCountPairs = map (computeAlleleCount genoLine ploidyVec indivNames) rightI
             rTotalDerived = sum . map fst $ rAlleleCountPairs
-            rTotalHaps = 2 * sum (map length rightI)
+            rTotalHaps = sum $ do
+                i <- rightI
+                i2 <- i
+                case ploidyVec V.! i2 of
+                    Haploid -> return 1
+                    Diploid -> return 2
             rTotalFreq = (fromIntegral rTotalDerived / fromIntegral rTotalHaps :: Double)
             rTotalNonMissing = sum . map snd $ rAlleleCountPairs
             rMissingness = fromIntegral (rTotalHaps - rTotalNonMissing) / fromIntegral rTotalHaps
@@ -284,7 +295,6 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
                         when (any (/= Missing) [genoLine V.! j | j <- i2s]) . liftIO $ VUM.modify counts (+1) i1
                     let rDirectedTotalCount = if polarise then rTotalHaps - rTotalDerived else rTotalDerived
                         rDirectedTotalFreq = fromIntegral rDirectedTotalCount / fromIntegral rTotalHaps
-                    -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
                     let conditionMin = case minFreq of
                             FreqNone -> True
                             FreqK k  -> rDirectedTotalCount >= k
@@ -294,34 +304,35 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
                             FreqK k  -> rDirectedTotalCount <= k
                             FreqX x  -> rDirectedTotalFreq <= x
                     when (conditionMin && conditionMax) $ do
-                        -- liftIO $ hPrint stderr (directedTotalCount, totalDerived, totalNonMissing, totalHaps, missingness)
-                        -- main loop
                         let nR = length popRights
                             leftFreqsNonRef = map (computeAlleleFreq genoLine ploidyVec indivNames) leftI
                             leftFreqs = if polarise then map (fmap (1.0 - )) leftFreqsNonRef else leftFreqsNonRef
                             rightFreqs = do
                                 r <- rightI
                                 let nrDerived = fst $ computeAlleleCount genoLine ploidyVec indivNames r
-                                let n = 2 * length r
+                                let n = sum $ do -- we consider missing = reference allele(s)
+                                        i <- r
+                                        case ploidyVec V.! i of
+                                            Haploid -> return 1.0
+                                            Diploid -> return 2.0
                                 if polarise then
-                                    return $ 1.0 - (fromIntegral nrDerived / fromIntegral n)
+                                    return $ 1.0 - (fromIntegral nrDerived / n)
                                 else
-                                    return (fromIntegral nrDerived / fromIntegral n)
+                                    return (fromIntegral nrDerived / n)
                             relevantLeftFreqs  = [(i, x) | (i, Just x) <- zip [0..] leftFreqs,  x > 0.0]
                             relevantRightFreqs = [(i, x) | (i,      x) <- zip [0..] rightFreqs, x > 0.0]
                         forM_ relevantLeftFreqs $ \(i, x) ->
                             forM_ relevantRightFreqs $ \(j, y) -> do
                                 let index = i * nR + j
                                 liftIO $ VUM.modify vals (+(x * y)) index
-        return (newStartPos, newEndPos, counts, vals)
-    initialise :: (MonadIO m) => Int -> Int -> m (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double)
+        return $ BlockAccumulator newStartPos newEndPos counts vals
+    initialise :: (MonadIO m) => Int -> Int -> m BlockAccumulator
     initialise nL nR = do
         countVec <- liftIO $ VUM.replicate nL 0
         valVec <- liftIO $ VUM.replicate (nL * nR) 0.0
-        return (Nothing, Nothing, countVec, valVec)
-    extract :: (MonadIO m) => (Maybe GenomPos, Maybe GenomPos, VUM.IOVector Int, VUM.IOVector Double) ->
-            m BlockData
-    extract (maybeStartVec, maybeEndVec, counts, vals) = case (maybeStartVec, maybeEndVec) of
+        return $ BlockAccumulator Nothing Nothing countVec valVec
+    extract :: (MonadIO m) => BlockAccumulator -> m BlockData
+    extract (BlockAccumulator maybeStartVec maybeEndVec counts vals) = case (maybeStartVec, maybeEndVec) of
         (Just startPos, Just endPos) -> do
             let nLefts = VUM.length counts
                 nRights = VUM.length vals `div` nLefts

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-REPO=~/dev/poseidon-framework/published_data
+REPO=$HOME/dev/poseidon-framework/community-archive
 
-stack run xerxes -- ras --noMinFreq --noMaxFreq --maxSnps 100000 \
-  -d ~/dev/poseidon-framework/published_data --popConfigFile popConfigRAS.yml \
+stack run xerxes -- ras --noMinFreq --maxFreq 0.1 --maxSnps 100000 \
+  -d $REPO --popConfigFile popConfigRAS.yml \
   --blockTableFile testRasBlockOut.txt --f4TableOutFile testF4out.txt > testRasOut.txt
