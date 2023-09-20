@@ -158,10 +158,10 @@ runFstats opts = do
     let nrCols = if hasAscertainment then 11 else 9
     let colSpecs = replicate nrCols (column expand def def def)
         tableH = if hasAscertainment
-                    then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate", "StdErr", "Z score"]
-                    else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate", "StdErr", "Z score"]
+                    then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate_Total", "Estimate_Jackknife", "StdErr_Jackknife", "Z_score_Jackknife"]
+                    else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate_Total", "Estimate_Jackknife", "StdErr_Jackknife", "Z_score_Jackknife"]
         tableB = do
-            (fstat, (estimate, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
+            (fstat, (estimateFull, estimateJN, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
             let FStatSpec fType slots maybeAsc = fstat
                 abcdStr = take 4 (map show slots ++ repeat "")
                 (asc1, asc2) = case maybeAsc of
@@ -169,9 +169,9 @@ runFstats opts = do
                     Just (AscertainmentSpec Nothing   ref lo up) -> (show ("n/a" :: String, ref), show (lo, up))
                     _ ->                                            ("n/a",                       "n/a")
             if hasAscertainment then
-                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int), asc1, asc2] ++ [printf "%.4g" estimateFull, printf "%.4g" estimateJN, printf "%.4g" stdErr, show (estimateJN / stdErr)]
             else
-                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimate, printf "%.4g" stdErr, show (estimate / stdErr)]
+                return $ [show fType] ++ abcdStr ++ [show (round nrSites :: Int)] ++ [printf "%.4g" estimateFull, printf "%.4g" estimateJN, printf "%.4g" stdErr, show (estimateJN / stdErr)]
     liftIO . putStrLn $ tableString colSpecs asciiRoundS (titlesH tableH) [rowsG tableB]
 
     -- optionally output the results into a tab-separated table
@@ -368,7 +368,8 @@ collectStatSpecGroups statSpecs = nub $ do
         Just (AscertainmentSpec Nothing ref _ _)   -> slots ++ [ref]
         Nothing                                    -> slots
 
-processBlocks :: [FStatSpec] -> [BlockData] -> [(Double, Double)]
+-- returns the total estimate, the jackknife estimate, and the jackknife error
+processBlocks :: [FStatSpec] -> [BlockData] -> [(Double, Double, Double)]
 processBlocks statSpecs blocks = do
     let block_weights = map (fromIntegral . blockSiteCount) blocks
     (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
@@ -388,7 +389,8 @@ processBlocks statSpecs blocks = do
                         denom = sum [v | (k, v) <- zip [0..] denominator_values, k /= j]
                         denom_norm = sum [v | (k, v) <- zip [0..] denominator_norm, k /= j]
                     return $ (num / num_norm) / (denom / denom_norm)
-            in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
+                (estimateJackknife, stdErrJackknife) = computeJackknifeOriginal full_estimate block_weights partial_estimates
+            in  return (full_estimate, estimateJackknife, stdErrJackknife)
         _ ->
             let values = map ((!!0) . (!!i) . blockStatVal) blocks
                 norm = map ((!!1) . (!!i) . blockStatVal) blocks
@@ -398,7 +400,8 @@ processBlocks statSpecs blocks = do
                     let val' = sum [v | (k, v) <- zip [0..] values, k /= j]
                         norm' = sum [v | (k, v) <- zip [0..] norm, k /= j]
                     return $ val' / norm'
-            in  return $ computeJackknifeOriginal full_estimate block_weights partial_estimates
+                (estimateJackknife, stdErrJackknife) = computeJackknifeOriginal full_estimate block_weights partial_estimates
+            in  return (full_estimate, estimateJackknife, stdErrJackknife)
 
 -- outer list: stats, inner list: estimates per block
 processBlockIndividually :: [FStatSpec] -> BlockData -> [Double]

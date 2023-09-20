@@ -332,7 +332,7 @@ We then first define the Jackknife estimate:
 
 $$\theta_J = g \theta_n - \sum_{j=1}^g (1 - m_j / n) \theta_{-j}$$
 
-Note that for many statistics, one can show that $\theta_J=\theta_n$, but that is not in general the case, and in fact not for all of the above statistics. In \texttt{xerxes fstats}, we report both the genome-wide estimate $\theta_n$ (called "estimate\_total")and the Jackknife estimate $\theta_J$ (called "estimate\_Jackknife") in the output table. In general, for ease of communication and clarity of methods, the genome-wide estimate should be reported as the actual estimate.
+Note that for many statistics, one can show that $\theta_J=\theta_n$, but that is not in general the case, and in fact not for all of the above statistics. In \texttt{xerxes fstats}, we report both the genome-wide estimate $\theta_n$ (called "Estimate\_Full")and the Jackknife estimate $\theta_J$ (called "Estimate\_Jackknife") in the output table. In general, for ease of communication and clarity of methods, the genome-wide estimate should be reported as the actual estimate.
 
 We also can derive an estimate of the standard error, $\sigma_J$ of the Jackknife estimate (which we take to be also the standard error of the total estimate). As derived in \cite{Busing1999-ev}, it is given by:
 
@@ -343,6 +343,10 @@ p_j &= h_j \theta_n - (h_j - 1) \theta_{-j}\\
 \sigma_J^2 &= \frac{1}{g} \sum_{j=1}^g \frac{1}{h_j - 1} (p_j - \theta_J)^2
 \end{split}
 \end{equation}
+
+Finally, we compute Z-scores for statistics as
+
+$$Z=\frac{\theta_J}{\sigma_J}$$
 
 \subsubsection{Implementation}
 
