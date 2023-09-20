@@ -309,8 +309,8 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
                 (PWM,        [a, b])       -> retWithNormAcc $ computePWM        <$> caf a <*> caf b
                 (Het,        [a])          -> retWithNormAcc $ computeHet        <$> cac a
                 (F2,         [a, b])       -> retWithNormAcc $ computeF2         <$> cac a <*> cac b
-                (FSTvanilla, [a, b])       -> retWithNormAcc $  computeFSTvanilla    (caf a)   (caf b)
-                (FST,        [a, b])       -> retWithNormAcc $  computeFST           (cac a)   (cac b)
+                (FSTvanilla, [a, b])       -> retWithNormAcc $ computeFSTvanilla    (caf a)   (caf b)
+                (FST,        [a, b])       -> retWithNormAcc $ computeFST           (cac a)   (cac b)
                 (F3star,         [a, b, c])    ->
                     retWithNormAcc (computeF3noNorm <$> caf a <*> caf b <*> cac c) ++
                     retWithNormAcc (computeHet <$> cac c)
