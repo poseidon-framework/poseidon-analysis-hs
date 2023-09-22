@@ -155,11 +155,11 @@ runFstats opts = do
                 _       -> return True
 
     -- the standard output, pretty-printed to stdout
-    let nrCols = if hasAscertainment then 11 else 9
-    let colSpecs = replicate nrCols (column expand def def def)
-        tableH = if hasAscertainment
+    let tableH = if hasAscertainment
                     then ["Statistic", "a", "b", "c", "d", "NrSites", "Asc (Og, Ref)", "Asc (Lo, Up)", "Estimate_Total", "Estimate_Jackknife", "StdErr_Jackknife", "Z_score_Jackknife"]
                     else ["Statistic", "a", "b", "c", "d", "NrSites", "Estimate_Total", "Estimate_Jackknife", "StdErr_Jackknife", "Z_score_Jackknife"]
+    let nrCols = length tableH
+    let colSpecs = replicate nrCols (column expand def def def)
         tableB = do
             (fstat, (estimateFull, estimateJN, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
             let FStatSpec fType slots maybeAsc = fstat
