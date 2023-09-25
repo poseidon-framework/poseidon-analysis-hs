@@ -42,9 +42,21 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixMethodSettings          :: AdmixPopsMethodSettings
     , _admixOutFormat               :: GenotypeFormatSpec
     , _admixOutPath                 :: FilePath
+<<<<<<< HEAD
     , _admixOutPacName              :: Maybe String
     , _admixOutputPlinkPopMode      :: PlinkPopNameMode
     , _admixOnlyLatest              :: Bool
+=======
+    , _forgeOutPacName              :: Maybe String
+    , _forgeOutputPlinkPopMode      :: PlinkPopNameMode
+    }
+
+pacReadOpts :: PackageReadOptions
+pacReadOpts = defaultPackageReadOptions {
+      _readOptIgnoreChecksums  = True
+    , _readOptIgnoreGeno       = False
+    , _readOptGenoCheck        = True
+>>>>>>> f3b84d8858c21b7f29e2e1721b7e66ad1897f144
     }
 
 runAdmixPops :: AdmixPopsOptions -> PoseidonIO ()
