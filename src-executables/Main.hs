@@ -242,6 +242,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseOutPackagePath
                                       <*> parseMaybeOutPackageName
                                       <*> parseOutputPlinkPopMode
+                                      <*> parseOnlyLatest
 
 parseIndWithAdmixtureSetDirect :: OP.Parser [RequestedInd]
 parseIndWithAdmixtureSetDirect = OP.option (OP.eitherReader readIndWithAdmixtureSetString) (

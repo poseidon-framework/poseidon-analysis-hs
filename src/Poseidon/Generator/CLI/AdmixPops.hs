@@ -42,16 +42,9 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixMethodSettings          :: AdmixPopsMethodSettings
     , _admixOutFormat               :: GenotypeFormatSpec
     , _admixOutPath                 :: FilePath
-    , _forgeOutPacName              :: Maybe String
-    , _forgeOutputPlinkPopMode      :: PlinkPopNameMode
-    }
-
-pacReadOpts :: PackageReadOptions
-pacReadOpts = defaultPackageReadOptions {
-      _readOptStopOnDuplicates = False
-    , _readOptIgnoreChecksums  = True
-    , _readOptIgnoreGeno       = False
-    , _readOptGenoCheck        = True
+    , _admixOutPacName              :: Maybe String
+    , _admixOutputPlinkPopMode      :: PlinkPopNameMode
+    , _admixOnlyLatest              :: Bool
     }
 
 runAdmixPops :: AdmixPopsOptions -> PoseidonIO ()
@@ -65,7 +58,14 @@ runAdmixPops (
         outPath
         maybeOutName
         outPlinkPopMode
+        onlyLatest
     ) = do
+    let pacReadOpts = defaultPackageReadOptions {
+      _readOptIgnoreChecksums  = True
+    , _readOptIgnoreGeno       = False
+    , _readOptGenoCheck        = True
+    , _readOptOnlyLatest       = onlyLatest
+    }
     -- compile individuals
     popsWithFracsFromFile <- case popsWithFracsFile of
         Nothing -> return []
