@@ -41,7 +41,7 @@ type PloidyVec = V.Vector JannoGenotypePloidy
 addGroupDefs :: [GroupDef] -> [PoseidonPackage] -> [PoseidonPackage]
 addGroupDefs groupDefs pacs = do -- this loops through all input packages
     pac <- pacs
-    let isLatest = isLatestInCollection pacs pac
+    isLatest <- isLatestInCollection pacs pac
     let newJanno = JannoRows $ do -- this loops through the janno-file
             jannoRow <- getJannoRowsFromPac pac
             let oldGroupNames = (getJannoList . jGroupName) jannoRow
