@@ -14,7 +14,7 @@ fstats:
 
 Second, fstats now uses the information in the column "Genotype_Ploidy" from the Janno file to improve bias-correction. Specifically, haploid samples contribute only one chromosome to the count in the bias-correction formula.
 
-We also now added a whitepaper (available under `docs/`), which details the bias-correction and many other aspects of the mahtematical basis for F-Statistics. The whitepaper may expand to other aspects of xerxes in the future.
+We also now added a whitepaper (available under `docs/`), which details the bias-correction and many other aspects of the mathematical basis for F-Statistics. The whitepaper may expand to other aspects of xerxes in the future.
 
 # V0.3.4.0: Poseidon 2.7.1 and running admixpops in chunks
 
