@@ -123,7 +123,7 @@ runFstats opts = do
     let packagesWithNewGroups = addGroupDefs groupDefs allPackages
 
     -- select only the packages needed for the statistics to be computed
-    let relevantPackageNames = determineRelevantPackages collectedStats . getJointIndividualInfo $ packagesWithNewGroups
+    relevantPackageNames <- determineRelevantPackages collectedStats . getJointIndividualInfo $ packagesWithNewGroups
     let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) packagesWithNewGroups
     logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
     mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
@@ -354,8 +354,7 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
 
 pacReadOpts :: PackageReadOptions
 pacReadOpts = defaultPackageReadOptions {
-      _readOptStopOnDuplicates = True
-    , _readOptIgnoreChecksums  = True
+      _readOptIgnoreChecksums  = True
     , _readOptIgnoreGeno       = False
     , _readOptGenoCheck        = True
     }

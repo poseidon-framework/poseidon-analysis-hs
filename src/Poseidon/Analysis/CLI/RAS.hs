@@ -102,7 +102,7 @@ runRAS rasOpts = do
         Just o  -> logInfo $ "Found outgroup: " ++ show o
 
     -- reading in Poseidon packages
-    let pacReadOpts = defaultPackageReadOptions {_readOptStopOnDuplicates = True, _readOptIgnoreChecksums = True}
+    let pacReadOpts = defaultPackageReadOptions {_readOptIgnoreChecksums = True}
     allPackages <- readPoseidonPackageCollection pacReadOpts (_rasBaseDirs rasOpts)
     logInfo $ "Loaded " ++ show (length allPackages) ++ " packages"
 
@@ -121,7 +121,7 @@ runRAS rasOpts = do
     let packagesWithNewGroups = addGroupDefs groupDefs allPackages
 
     -- select only the packages needed for the statistics to be computed
-    let relevantPackageNames = determineRelevantPackages (popLefts ++ popRights ++ outgroupSpec) . getJointIndividualInfo $ packagesWithNewGroups
+    relevantPackageNames <- determineRelevantPackages (popLefts ++ popRights ++ outgroupSpec) . getJointIndividualInfo $ packagesWithNewGroups
     let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) packagesWithNewGroups
     logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
     mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
