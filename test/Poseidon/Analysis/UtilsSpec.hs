@@ -11,7 +11,7 @@ import           Poseidon.Package           (PackageReadOptions (..),
                                              defaultPackageReadOptions,
                                              getJointIndividualInfo,
                                              readPoseidonPackageCollection)
-import           Poseidon.Utils             (testLog, PoseidonException(..))
+import           Poseidon.Utils             (PoseidonException (..), testLog)
 import           SequenceFormats.Eigenstrat (GenoEntry (..))
 import           Test.Hspec
 
@@ -61,4 +61,4 @@ testComputeAlleleCount =
   where
     isGenotypeException (PoseidonGenotypeException "Sample Ind0 is heterozygous, but should be haploid. Check if the Ploidy-information in the Janno-file is correct") = True
     isGenotypeException _ = False
-            
+

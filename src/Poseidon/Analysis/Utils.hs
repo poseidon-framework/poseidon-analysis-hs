@@ -21,7 +21,8 @@ import           Poseidon.Janno             (JannoGenotypePloidy (..),
                                              JannoRows (..), getJannoList)
 import           Poseidon.Package           (PoseidonPackage (..),
                                              getJannoRowsFromPac)
-import           Poseidon.Utils             (PoseidonIO, logWarning, PoseidonException(..))
+import           Poseidon.Utils             (PoseidonException (..), PoseidonIO,
+                                             logWarning)
 import           SequenceFormats.Eigenstrat (EigenstratSnpEntry (..),
                                              GenoEntry (..), GenoLine)
 import           SequenceFormats.Utils      (Chrom)
