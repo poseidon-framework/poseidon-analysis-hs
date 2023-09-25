@@ -1,3 +1,21 @@
+# V1.0.0.0: specify package-versions in fstats, genotype ploidy and whitepaper
+This release updates to the latest version of poseidon-hs (1.4.0.0), which introduced a major clarification and improvement of the entity-selection language, that also powers the selection language to specify groups in fstats and define the statistics.
+
+In particular, appending a version of a package after the package-name is now possible, both in group selection and statistic definitions. For example, here is a possible fstats configuration file:
+
+```YAML
+groupDefs:
+  Group1: ["*package1-v1.0.0*", "group2", "<pac1-v2.3.4:group:name>"]
+fstats:
+- type: F2
+  a: ["Group1", "Spanish"]
+  b: ["Han", "CEU2"]
+```
+
+Second, fstats now uses the information in the column "Genotype_Ploidy" from the Janno file to improve bias-correction. Specifically, haploid samples contribute only one chromosome to the count in the bias-correction formula.
+
+We also now added a whitepaper (available under `docs/`), which details the bias-correction and many other aspects of the mahtematical basis for F-Statistics. The whitepaper may expand to other aspects of xerxes in the future.
+
 # V0.3.4.0: Poseidon 2.7.1 and running admixpops in chunks
 
 This release yet again updates the version of poseidon-hs (to v1.2.1.0). This enables `xerxes` to read Poseidon packages of version 2.7.1. We also switched to a newer stack resolver version and updated the GitHub Actions for automatic testing.
