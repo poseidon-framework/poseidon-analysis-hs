@@ -1,5 +1,6 @@
-# V1.0.0.0: specify package-versions in fstats, genotype ploidy and whitepaper
-This release updates to the latest version of poseidon-hs (1.4.0.0), which introduced a major clarification and improvement of the entity-selection language, that also powers the selection language to specify groups in fstats and define the statistics.
+# V1.0.0.1: specify package-versions in fstats, genotype ploidy and whitepaper
+
+This release updates to the latest version of poseidon-hs (v1.4.0.2), which introduced a major clarification and improvement of the entity-selection language, that also powers the selection language to specify groups in fstats and define the statistics.
 
 In particular, appending a version of a package after the package-name is now possible, both in group selection and statistic definitions. For example, here is a possible fstats configuration file:
 

@@ -1,5 +1,6 @@
+- 1.0.0.1: Switched to poseidon-hs v1.4.0.2
 - 1.0.0.0: Some key updates:
-	- now uses newest poseidon-hs library with improved and clarified semantics for entity selectors
+	- now uses newest poseidon-hs library (v1.4.0.0) with improved and clarified semantics for entity selectors
 	- Fstats now uses the information in the column "Genotype_Ploidy" from the Janno file to improve bias-correction. Specifically, haploid samples
 	  contribute only one chromosome to the count in the bias-correction formula.
 	- added a whitepaper to describe the mathematics of the statistics in "docs".
