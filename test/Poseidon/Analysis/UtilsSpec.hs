@@ -38,7 +38,7 @@ testAddGroupDefs = do
                     ("MyNewGroup2", [Include (Ind "XXX011"), Include (Ind "XXX012")])
                     ]
             let newPacs = addGroupDefs groupDefs pacs
-            let indInfo = getJointIndividualInfo newPacs
+            (indInfo, _) <- getJointIndividualInfo newPacs
             (map indInfoGroups . filter ((=="XXX017") . indInfoName) $ indInfo) `shouldBe` [["POP1", "MyNewGroup1"]]
             (map indInfoGroups . filter ((=="XXX007") . indInfoName) $ indInfo) `shouldBe` [["POP1", "MyNewGroup1"]]
             (map indInfoGroups . filter ((=="XXX011") . indInfoName) $ indInfo) `shouldBe` [["POP1", "MyNewGroup2"]]
