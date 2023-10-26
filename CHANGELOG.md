@@ -1,3 +1,4 @@
+- 1.0.0.2: Switched to poseidon-hs v1.4.0.3 and a new compiler (GHC 9.4.7) and stackage snapshot version (LTS-21.17)
 - 1.0.0.1: Switched to poseidon-hs v1.4.0.2
 - 1.0.0.0: Some key updates:
 	- now uses newest poseidon-hs library (v1.4.0.0) with improved and clarified semantics for entity selectors
