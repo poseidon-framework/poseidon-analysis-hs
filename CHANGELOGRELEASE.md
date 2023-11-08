@@ -1,3 +1,7 @@
+# V1.0.0.2: performance-fix due to update of poseidon-hs dependency
+
+This release simply updates the dependency on poseidon-hs, which in turn [fixed a performance leak](https://github.com/poseidon-framework/poseidon-hs/releases/tag/v1.4.0.3) with our entity selection framework.
+
 # V1.0.0.1: specify package-versions in fstats, genotype ploidy and whitepaper
 
 This release updates to the latest version of poseidon-hs (v1.4.0.2), which introduced a major clarification and improvement of the entity-selection language, that also powers the selection language to specify groups in fstats and define the statistics.
