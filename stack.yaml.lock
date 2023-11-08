@@ -5,15 +5,15 @@
 
 packages:
 - completed:
-    commit: 215e0106dc21b3cbe84287da13e47f19cb7c0e61
+    commit: a760f94e963e171aeb884f855f910d53d92cdef5
     git: https://github.com/poseidon-framework/poseidon-hs
     name: poseidon-hs
     pantry-tree:
-      sha256: bf36052db164931ca7e91a158d9c1ec282034a4249160b620ece877d2954b7a7
+      sha256: 0ca7f5e2d425de4f635a32163f1e30bfff23f40218b756f45d26183254607af1
       size: 44449
-    version: 1.4.0.2
+    version: 1.4.0.3
   original:
-    commit: 215e0106dc21b3cbe84287da13e47f19cb7c0e61
+    commit: a760f94e963e171aeb884f855f910d53d92cdef5
     git: https://github.com/poseidon-framework/poseidon-hs
 - completed:
     hackage: table-layout-0.9.1.0@sha256:172b8b3a06c992839a781b77e42bbce689ba87d92c260acb61d187f7e6aad7f2,7154
@@ -44,12 +44,12 @@ packages:
   original:
     hackage: pipes-ordered-zip-1.2.1
 - completed:
-    hackage: co-log-0.5.0.0@sha256:a7e84650eaef7eba2d59ee7664309e79317a7ca67011abedf971f0e6bd6475bb,5448
+    hackage: co-log-0.6.0.2@sha256:91c14447cb1cbdd6d76317e80d2acd75efe4d964975a57f9731d8af56a4fba7a,6395
     pantry-tree:
-      sha256: 33b838c07c8b7e70b2e82bddc889bb1e6386d7e12a9d1593c0b4b263b1fcb925
-      size: 1043
+      sha256: 2ed9bcc839c3681796dd7ef797bcd65cf73e20fc0c542c94cae0a2532db7b3ba
+      size: 1198
   original:
-    hackage: co-log-0.5.0.0
+    hackage: co-log-0.6.0.2
 - completed:
     hackage: ansi-terminal-0.10.3@sha256:e2fbcef5f980dc234c7ad8e2fa433b0e8109132c9e643bc40ea5608cd5697797,3226
     pantry-tree:
@@ -71,16 +71,9 @@ packages:
       size: 581
   original:
     hackage: chronos-1.1.5
-- completed:
-    hackage: typerep-map-0.5.0.0@sha256:34f1ba9b268a6d52e26ae460011a5571e8099b50a3f4a7c8db25dd8efe3be8ee,4667
-    pantry-tree:
-      sha256: ca5565de307d260dc67f6dae0d4d33eee42a3238183461569b5142ceb909c91d
-      size: 1487
-  original:
-    hackage: typerep-map-0.5.0.0
 snapshots:
 - completed:
-    sha256: e019cd29e3f7f9dbad500225829a3f7a50f73c674614f2f452e21bb8bf5d99ea
-    size: 650253
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/20/24.yaml
-  original: lts-20.24
+    sha256: 85d2382958c178491d3fe50d770a624621f5ab456beef7d31ac7521f780c9bc7
+    size: 640042
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/21/17.yaml
+  original: lts-21.17

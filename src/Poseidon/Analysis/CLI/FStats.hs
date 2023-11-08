@@ -117,13 +117,13 @@ runFstats opts = do
         collectedStats = collectStatSpecGroups statSpecs
         -- new groups can be used on the right hand side of further group definitions, that's why we explicitly exclude them here in the end of the expression
         allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++ collectedStats) \\ newGroups
-    checkIfAllEntitiesExist allEntities . getJointIndividualInfo $ allPackages
+    checkIfAllEntitiesExist allEntities =<< getJointIndividualInfo allPackages
 
     -- annotate all individuals in all packages with the new adhoc-group definitions where necessary
     let packagesWithNewGroups = addGroupDefs groupDefs allPackages
 
     -- select only the packages needed for the statistics to be computed
-    relevantPackageNames <- determineRelevantPackages collectedStats . getJointIndividualInfo $ packagesWithNewGroups
+    relevantPackageNames <- determineRelevantPackages collectedStats =<< getJointIndividualInfo packagesWithNewGroups
     let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) packagesWithNewGroups
     logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
     mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
@@ -230,12 +230,12 @@ type EntityAlleleFreqLookup  = M.Map PoseidonEntity (Maybe Double)
 -- This functioin builds the central Fold that is run over each block of sites of the input data. The return is a tuple of the internal FStats datatypes and the fold.
 buildStatSpecsFold :: (MonadIO m) => [PoseidonPackage] -> [FStatSpec] -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildStatSpecsFold packages fStatSpecs = do
-    let indInfos = getJointIndividualInfo packages
-        indivNames = map indInfoName indInfos
+    indInfoCollection <- getJointIndividualInfo packages
+    let indivNames = map indInfoName (fst indInfoCollection)
     ploidyVec <- makePloidyVec . getJointJanno $ packages
     entityIndicesLookup <- do
         let collectedSpecs = collectStatSpecGroups fStatSpecs
-        entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfos | s <- collectedSpecs]
+        entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfoCollection | s <- collectedSpecs]
         return . M.fromList . zip collectedSpecs $ entityIndices
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do

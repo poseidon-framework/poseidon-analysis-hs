@@ -115,13 +115,13 @@ runRAS rasOpts = do
     let newGroups = map (Group . fst) groupDefs
     let allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++
             popLefts ++ popRights ++ outgroupSpec) \\ newGroups
-    checkIfAllEntitiesExist allEntities . getJointIndividualInfo $ allPackages
+    checkIfAllEntitiesExist allEntities =<< getJointIndividualInfo allPackages
 
     -- annotate all individuals in all packages with the new adhoc-group definitions where necessary
     let packagesWithNewGroups = addGroupDefs groupDefs allPackages
 
     -- select only the packages needed for the statistics to be computed
-    relevantPackageNames <- determineRelevantPackages (popLefts ++ popRights ++ outgroupSpec) . getJointIndividualInfo $ packagesWithNewGroups
+    relevantPackageNames <- determineRelevantPackages (popLefts ++ popRights ++ outgroupSpec) =<< getJointIndividualInfo packagesWithNewGroups
     let relevantPackages = filter (flip elem relevantPackageNames . posPacNameAndVersion) packagesWithNewGroups
     logInfo $ (show . length $ relevantPackages) ++ " relevant packages for chosen statistics identified:"
     mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
@@ -246,16 +246,16 @@ readPopConfig fn = do
 
 buildRasFold :: (MonadIO m) => [PoseidonPackage] -> FreqSpec -> FreqSpec -> Double -> Maybe PoseidonEntity -> EntitiesList -> EntitiesList -> PoseidonIO (FoldM m (EigenstratSnpEntry, GenoLine) BlockData)
 buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
-    let indInfos = getJointIndividualInfo packages
+    indInfoCollection <- getJointIndividualInfo packages
     ploidyVec <- makePloidyVec . getJointJanno $ packages
     outgroupI <- case maybeOutgroup of
             Nothing -> return []
-            Just o  -> resolveUniqueEntityIndices [o] indInfos
-    leftI <- sequence [resolveUniqueEntityIndices [l] indInfos | l <- popLefts]
-    rightI <- sequence [resolveUniqueEntityIndices [r] indInfos | r <- popRights]
+            Just o  -> resolveUniqueEntityIndices [o] indInfoCollection
+    leftI <- sequence [resolveUniqueEntityIndices [l] indInfoCollection | l <- popLefts]
+    rightI <- sequence [resolveUniqueEntityIndices [r] indInfoCollection | r <- popRights]
     let nL = length popLefts
         nR = length popRights
-    let indivNames = map indInfoName indInfos
+    let indivNames = map indInfoName (fst indInfoCollection)
     return $ FoldM (step ploidyVec indivNames outgroupI leftI rightI) (initialise nL nR) extract
   where
     step :: (MonadIO m) => PloidyVec -> [String] -> [Int] -> [[Int]] -> [[Int]] -> BlockAccumulator ->
