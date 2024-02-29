@@ -33,7 +33,6 @@ data FStatType = F4
     | FST
     | F3vanilla
     | F2vanilla
-    | FSTvanilla
     deriving (Show, Read, Eq)
 
 -- | A datatype to represent F-Statistics to be computed from genotype data.
@@ -100,7 +99,6 @@ instance FromJSON FStatType where
         "PWM"        -> return PWM
         "Het"        -> return Het
         "F3vanilla"  -> return F3vanilla
-        "FSTvanilla" -> return FSTvanilla
         "F2vanilla"  -> return F2vanilla
         _            -> fail "could not parse FStat type. Must be one of F4, F3, F2, FST, PWM, Het, F3vanilla, FSTvanilla, F2vanilla"
 
@@ -201,7 +199,6 @@ fstatSlotLength fStatType = case fStatType of
     PWM        -> 2
     Het        -> 1
     F3vanilla  -> 3
-    FSTvanilla -> 2
     F2vanilla  -> 2
 
 readFStatsSimpleText :: (MonadIO m) => FilePath -> m [FStatSpec]

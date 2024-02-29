@@ -240,7 +240,8 @@ buildStatSpecsFold packages fStatSpecs = do
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
             case fType of
-                F3star -> liftIO $ VUM.replicate 4 0.0 --only F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                F3star -> liftIO $ VUM.replicate 4 0.0 -- F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                FST    -> liftIO $ VUM.replicate 4 0.0 -- same as with F3star
                 _      -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
     return $ FoldM (step ploidyVec indivNames entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
@@ -309,15 +310,17 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
                 (PWM,        [a, b])       -> retWithNormAcc $ computePWM        <$> caf a <*> caf b
                 (Het,        [a])          -> retWithNormAcc $ computeHet        <$> cac a
                 (F2,         [a, b])       -> retWithNormAcc $ computeF2         <$> cac a <*> cac b
-                (FSTvanilla, [a, b])       -> retWithNormAcc $ computeFSTvanilla    (caf a)   (caf b)
-                (FST,        [a, b])       -> retWithNormAcc $ computeFST           (cac a)   (cac b)
+                (FST,        [a, b])       ->
+                    retWithNormAcc (computeF2 <$> cac a <*> cac b) ++
+                    retWithNormAcc (computeFSTdenom <$> cac a <*> cac b)
                 (F3star,         [a, b, c])    ->
                     retWithNormAcc (computeF3noNorm <$> caf a <*> caf b <*> cac c) ++
                     retWithNormAcc (computeHet <$> cac c)
                 _ -> error "should never happen"
         else
             case fType of
-                F3 -> [0.0, 0.0, 0.0, 0.0]
+                F3  -> [0.0, 0.0, 0.0, 0.0]
+                FST -> [0.0, 0.0, 0.0, 0.0]
                 _  -> [0.0, 0.0]
   where
     retWithNormAcc (Just x) = [x, 1.0]
@@ -337,19 +340,8 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
             b = computeFreq nb sb
             corrFac = 0.5 * computeHet (na, sa) / fromIntegral sa + 0.5 * computeHet (nb, sb) / fromIntegral sb
         in  computeF2vanilla a b - corrFac
-    computeFSTvanilla maybeA maybeB =
-        case (maybeA, maybeB) of
-            (Just a, Just b) ->
-                let num = (a - b)^(2 :: Int)
-                    denom = a * (1 - b) + b * (1 - a)
-                in  if denom > 0 then Just (num / denom) else Nothing
-            _ -> Nothing
-    computeFST maybeNaSa maybeNbSb = case (maybeNaSa, maybeNbSb) of
-        (Just (na, sa), Just (nb, sb)) ->
-            let num = computeF2 (na, sa) (nb, sb)
-                denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
-            in  if denom > 0 then Just (num / denom) else Nothing
-        _ -> Nothing
+    computeFSTdenom (na, sa) (nb, sb) =
+        computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
 pacReadOpts :: PackageReadOptions
