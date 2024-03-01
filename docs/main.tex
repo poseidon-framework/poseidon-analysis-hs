@@ -15,16 +15,14 @@
 \newcounter{mathematicapage}
 \begin{document}
 
-\title{Xerxes Theoretical Background - Derivations and Statistical Details of the fstats and ras commands}
+\title{Xerxes Theoretical Background - Derivations and Statistical Details of the fstats command}
 \author{Stephan Schiffels\\Max Planck Institute for Evolutionary Anthropology\\ Leipzig, Germany}
 \date{Last update: September 2023}
 \maketitle
 
-\section{The FStats command}
-
 The program \texttt{xerxes fstats} within the poseidon-hs package serves as a one-stop shop for various SNP-based statistics that can be computed from genotype data, including F-Statistics, pairwise mismatch rate, FSt and likely more statistics in the future. F-Statistics were defined in a series of papers by Nick Patterson, David Reich and others, and comprehensively formally described in \cite{Patterson2012-yq}. Interested readers may also consult \cite{Peter2016-ml} as a useful reference.
 
-\subsection{F-Statistics}
+\section{F-Statistics}
 
 The most basic F-Statistics available in \texttt{fstats} are:
 
@@ -165,7 +163,7 @@ So we now have an unbiased estimator for the square of the allele frequency
 
 \begin{equation}
 \label{eq_freqSquare_unbiased}
-E\left( a^2-\frac{a(1-a)}{n}\right) =\left(a'\right)^2
+E\left( a^2-\frac{a(1-a)}{n-1}\right) =\left(a'\right)^2
 \end{equation}
 
 which is what we need to describe unbiased estimators for F2 and F3 statistics. The following are the estimators proposed in \cite{Patterson2012-yq} (in Appendix A, page 1089):
@@ -210,11 +208,11 @@ In such a haploid sampling scheme, the resulting number of {``}chromosomes{''} t
 
 In \texttt{xerxes}, we make use of the {``}Genotype$\_$Ploidy{''} column in the Janno File, to compute the correct number of chromosomes, since the genotype file itself does not provide this information (it is always coded as pseudo-diploid, even if the calling is haploid). If this column is missing, or contains missing data, \texttt{xerxes} will output a warning and assume that the data is fully diploid!
 
-\subsection{Beyond F-Statistics}
+\section{Beyond F-Statistics}
 
 Beyond F-Statistics, we support the following additional ones:
 
-\subsubsection{Heterozygosity}
+\subsection{Heterozygosity}
 
 Heterozygosity is defined using population allele frequencies as:
 
@@ -238,7 +236,7 @@ In[5]:= Expectation[2 k/n (1 - k/n) n/(n - 1),
 Out[5]= -2 (-aPrime + aPrime )
 \end{lstlisting}
 
-\subsubsection{F3star}
+\subsection{F3star}
 
 In addition to \texttt{F3} and \texttt{F3vanilla}, we also have \texttt{F3star}, which is a bias-corrected F3 normalised by the heterozygosity of population C, defined on page 1071 (right) in \cite{Patterson2012-yq}. Based on population allele frequencies we would have
 
@@ -253,27 +251,24 @@ software:
 F_3^*(a,b,c)=\frac{\left\langle (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right\rangle}{\left\langle 2 c(1-c )\frac{n_c}{n_c-1}\right\rangle}
 \end{equation}
 
-\subsubsection{FST}
+\subsection{$F_\text{ST}$}
 
-FSt is a measure for how differentiated two populations are, taking into account internal genetic variation. 
-
-Using population allele frequencies, it is defined as
+$F_\text{ST}$ is a measure for how differentiated two populations are, taking into account internal genetic variation. It is in spirit very similar to $F_2$, in that it becomes 0 if two populations are not differentiated at all (meaning they are effectively the same), and the more differentiated, the more positive is the measure. However, $F_\text{ST}$ is explicitly scaled in a way that exposes relative genetic drift. As derived in the excellent paper by \cite{Bhatia2013-qj}, we here use the so-called Hudson estimator, which is defined as 
 
 \begin{equation}
-\text{FST}_\text{vanilla}\left(a',b'\right)=\left\langle\frac{\left(a'-b'\right)^2}{a' \left(1-b'\right)+\left(1-a'\right) b'}\right\rangle
+\text{FST}_\text{vanilla}(a',b')=\frac{\left\langle\left(a'-b'\right)^2\right\rangle}{\left\langle a' \left(1-b'\right)+\left(1-a'\right) b'\right\rangle}
 \end{equation}
 
-There is no simple unbiased estimator for this expression, but there are unbiased estimators for both the numerator and denominator separately. Reich et al. 2009 argue that using simply the ratio of these two unbiased estimators, even though not strictly unbiased as a ratio, are still {``}asymptotically consistent{''} (see Appendix of Reich et al. 2009):
+As discussed in \cite{Bhatia2013-qj}, there is no simple unbiased estimator for this complete expression, but there are unbiased estimators for both the numerator and denominator separately:
 
 \begin{equation}
-\text{FST}(a,b)=\left\langle \frac{F_2(a,b)}{F_2(a,b)+a(1-a) \frac{n_a}{n_a-1}-b(1-b) \frac{n_b}{n_b-1}}\right\rangle
+\text{FST}(a,b)=\frac{\left\langle\left(a-b\right)^2-\frac{a(1-a)}{n_a-1} - \frac{b(1-a}{n_b-1}\right\rangle}
+{\left\langle a(1-b) + b(1-a)\right\rangle}
 \end{equation}
 
-where we used the unbiased estimator of \(F_2[a,b]\), which in turn contains multiple terms, see above.
+and this ratio of unbiased estimators turns out to be asymptotically also unbiased.
 
-Note that in practice those SNPs for which the denominator is 0 are excluded from the average.
-
-\subsubsection{Pairwise mismatch rate}
+\subsection{Pairwise mismatch rate}
 
 The pairwise mismatch rate (PWM) measures the rate of observing a different allele in two randomly sampled haplotypes. It is typically computed between pairs of individuals, for example to detect close relatives or identical individuals. 
 
@@ -281,42 +276,42 @@ Its definition is:
 
 $$\text{PWM}(a, b) = \left\langle a (1 - b) + (1 - a) b \right\rangle$$
 
-\subsection{Summary of all supported statistics in xerxes}
+\section{Summary of all supported statistics in xerxes}
 
 Here is a list of all statistics that can be computed in xerxes:
 
 \begin{center}
     \begin{tabular}{|c|c|c|}
         \hline
-        \textbf{Name (xerxes)} & \textbf{Formula} & \textbf{Unbiased} \\
+        \textbf{Name (xerxes)} & \textbf{Formula} & \textbf{Bias} \\
         \hline
         \hline
-        \texttt{F2vanilla} & $\left\langle (a-b)^2\right\rangle$  & No  \\
+        \texttt{F2vanilla} & $\left\langle (a-b)^2\right\rangle$  & Biased \\
         \hline
-        \texttt{F3vanilla} & $\langle (c-a)(c-b) \rangle$ & No  \\
+        \texttt{F3vanilla} & $\langle (c-a)(c-b) \rangle$ & Biased \\
         \hline
-        \texttt{F2} & $\left\langle (a-b)^2-\frac{a(1-a)}{n_a-1}-\frac{b(1-b)}{n_b-1}\right\rangle$  & Yes  \\
+        \texttt{F2} & $\left\langle (a-b)^2-\frac{a(1-a)}{n_a-1}-\frac{b(1-b)}{n_b-1}\right\rangle$  & Unbiased \\
         \hline
-        \texttt{F3} & $\left\langle( (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right\rangle$  & Yes  \\
+        \texttt{F3} & $\left\langle( (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right\rangle$  & Unbiased \\
         \hline
-        \texttt{F3star} & $\frac{\left\langle (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right\rangle}{\left\langle 2 c(1-c )\frac{n_c}{n_c-1}\right\rangle}$ & Asymptotically  \\
+        \texttt{F3star} & $\frac{\left\langle (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right\rangle}{\left\langle 2 c(1-c )\frac{n_c}{n_c-1}\right\rangle}$ & Asymptotically unbbiased \\
         \hline
-        \texttt{F4} & $\langle (a-b)(c-d) \rangle$  & Yes  \\
+        \texttt{F4} & $\langle (a-b)(c-d) \rangle$  & Unbiased \\
         \hline
-        \texttt{Het} & $\left\langle 2 c(1-c )\frac{n_c}{n_c-1}\right\rangle$  & Yes \\
+        \texttt{Het} & $\left\langle 2 c(1-c )\frac{n_c}{n_c-1}\right\rangle$  & Unbiased \\
         \hline
-        \texttt{FSTvanilla} & $\left\langle\frac{\left(a'-b'\right)^2}{a' \left(1-b'\right)+\left(1-a'\right) b'}\right\rangle$  & Asymptotically  \\
+        \texttt{FSTvanilla} & $\left\langle\frac{\left(a'-b'\right)^2}{a' \left(1-b'\right)+\left(1-a'\right) b'}\right\rangle$  & Biased  \\
         \hline
-        \texttt{FST} & $\left\langle \frac{F_2(a,b)}{F_2(a,b)+a(1-a) \frac{n_a}{n_a-1}-b(1-b) \frac{n_b}{n_b-1}}\right\rangle$  & No  \\
+        \texttt{FST} & $\frac{\left\langle\left(a-b\right)^2-\frac{a(1-a)}{n_a-1} - \frac{b(1-a}{n_b-1}\right\rangle}{\left\langle a(1-b) + b(1-a)\right\rangle}$  & Asympotically unbiased \\
         \hline
-        \texttt{PWM} & $\left\langle a (1 - b) + (1 - a) b \right\rangle$  & does not apply  \\
+        \texttt{PWM} & $\left\langle a (1 - b) + (1 - a) b \right\rangle$  & Unbiased \\
         \hline
     \end{tabular}
 \end{center}
 
-\subsection{Jackknife-Estimation of the standard error}
+\section{Jackknife-Estimation of the standard error}
 
-\subsubsection{Theory}
+\subsection{Theory}
 All of the above statistics are computed genome-wide, but we use a Block-Jackknife approach to estimate errors. This approach was also popularised in Patterson's software ADMIXTOOLS, and is based on a method proposed by \cite{Busing1999-ev}.
 
 The key idea is to evaluate the statistics not only genome-wide, but also for subsets of the genome. For these subsets, consider the entire data being divided into $g$ consecutive blocks, of equal or different sizes of $m_j$ sites in each block, where $j=1\ldots g$.
@@ -348,16 +343,13 @@ Finally, we compute Z-scores for statistics as
 
 $$Z=\frac{\theta_J}{\sigma_J}$$
 
-\subsubsection{Implementation}
+\subsection{Implementation}
 
 We implement two ways to define blocks in \texttt{xerxes fstats}. First, simply by chunks of a given number of SNPs (by default 5000), as for example specified using the parameter \texttt{--jackknife 5000}. Second, by entire chromosomes, as specified using the special declaration \texttt{--jackknife CHR}. In practice, we have not seen great differences between the two approaches, and the default is to chunk by 5000 SNPs.
 
 The program takes the \emph{total number of sites} in each block as the basis for the weights $m_j$, not just the sites contributing to a given statistic, which could exclude sites due to missing data. This choice was made to make the computation more reproducible and comparable across multiple statistics. Note that this does not mean that missingness is ignored. Of course, missingness still contributes to variance seen throughout the genome, and this gets reflected in the Jackkknife estimation of the standard error. We just decided to fix the weights themselves by the total number of sites, ignoring missingness for the specific couting of $m_j$.
 
-\subsection{Frequency-Ascertainment}
-This is an experimental feature that will be described properly in a forthcoming preprint, and then will be added also to this whitepaper.
-
-\section{The RAS command}
+\section{Frequency-Ascertainment}
 This is an experimental feature that will be described properly in a forthcoming preprint, and then will be added also to this whitepaper.
 
 \printbibliography
