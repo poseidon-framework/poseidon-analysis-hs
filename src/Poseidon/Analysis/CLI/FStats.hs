@@ -111,6 +111,13 @@ runFstats opts = do
     (groupDefs, statSpecs) <- readFstatInput (_foStatInput opts)
     unless (null groupDefs) . logInfo $ "Found group definitions: " ++ show groupDefs
 
+    -- filter statSpecs for degenerate statistics
+    let statSpecsFiltered = filter isNonDegenerate statSpecs
+    let degenerateStats = statSpecs \\ statSpecsFiltered
+    unless (null degenerateStats) $ do
+        logInfo "Removed degenerate statistics:"
+        mapM_ (logInfo . show) degenerateStats 
+
     -- ------- CHECKING WHETHER ENTITIES EXIST -----------
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
@@ -418,3 +425,6 @@ processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
             let value = statVals !! 0
                 norm = statVals !! 1
             in  return $ value / norm
+
+isNonDegenerate :: StatSpec -> Bool
+isNonDegenerate ()
