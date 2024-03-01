@@ -30,6 +30,7 @@ data FStatType = F4
     | F2
     | PWM
     | Het
+    | FSTvanilla
     | FST
     | F3vanilla
     | F2vanilla
@@ -95,6 +96,7 @@ instance FromJSON FStatType where
         "F3"         -> return F3
         "F3star"     -> return F3star
         "F2"         -> return F2
+        "VSTvanilla" -> return FSTvanilla
         "FST"        -> return FST
         "PWM"        -> return PWM
         "Het"        -> return Het
@@ -195,6 +197,7 @@ fstatSlotLength fStatType = case fStatType of
     F3         -> 3
     F3star     -> 3
     F2         -> 2
+    FSTvanilla -> 2
     FST        -> 2
     PWM        -> 2
     Het        -> 1

@@ -240,9 +240,10 @@ buildStatSpecsFold packages fStatSpecs = do
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
             case fType of
-                F3star -> liftIO $ VUM.replicate 4 0.0 -- F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
-                FST    -> liftIO $ VUM.replicate 4 0.0 -- same as with F3star
-                _      -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
+                F3star     -> liftIO $ VUM.replicate 4 0.0 -- F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                FSTvanilla -> liftIO $ VUM.replicate 4 0.0 -- same as with F3star
+                FST        -> liftIO $ VUM.replicate 4 0.0 -- same as with F3star
+                _          -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
     return $ FoldM (step ploidyVec indivNames entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
   where
@@ -305,23 +306,27 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
             case (fType, slots) of
                 (F4,         [a, b, c, d]) -> retWithNormAcc $ computeF4         <$> caf a <*> caf b <*> caf c <*> caf d
                 (F3vanilla,  [a, b, c])    -> retWithNormAcc $ computeF3vanilla  <$> caf a <*> caf b <*> caf c
-                (F3,         [a, b, c])    -> retWithNormAcc $ computeF3noNorm   <$> caf a <*> caf b <*> cac c
+                (F3,         [a, b, c])    -> retWithNormAcc $ computeF3   <$> caf a <*> caf b <*> cac c
                 (F2vanilla,  [a, b])       -> retWithNormAcc $ computeF2vanilla  <$> caf a <*> caf b
                 (PWM,        [a, b])       -> retWithNormAcc $ computePWM        <$> caf a <*> caf b
                 (Het,        [a])          -> retWithNormAcc $ computeHet        <$> cac a
                 (F2,         [a, b])       -> retWithNormAcc $ computeF2         <$> cac a <*> cac b
+                (FSTvanilla,        [a, b])       ->
+                    retWithNormAcc (computeF2vanilla <$> caf a <*> caf b) ++
+                    retWithNormAcc (computePWM <$> caf a <*> caf b)
                 (FST,        [a, b])       ->
                     retWithNormAcc (computeF2 <$> cac a <*> cac b) ++
-                    retWithNormAcc (computeFSTdenom <$> cac a <*> cac b)
+                    retWithNormAcc (computePWM <$> caf a <*> caf b)
                 (F3star,         [a, b, c])    ->
-                    retWithNormAcc (computeF3noNorm <$> caf a <*> caf b <*> cac c) ++
+                    retWithNormAcc (computeF3 <$> caf a <*> caf b <*> cac c) ++
                     retWithNormAcc (computeHet <$> cac c)
                 _ -> error "should never happen"
         else
             case fType of
-                F3  -> [0.0, 0.0, 0.0, 0.0]
-                FST -> [0.0, 0.0, 0.0, 0.0]
-                _  -> [0.0, 0.0]
+                F3         -> [0.0, 0.0, 0.0, 0.0]
+                FSTvanilla -> [0.0, 0.0, 0.0, 0.0]
+                FST        -> [0.0, 0.0, 0.0, 0.0]
+                _          -> [0.0, 0.0]
   where
     retWithNormAcc (Just x) = [x, 1.0]
     retWithNormAcc Nothing  = [0.0, 0.0]
@@ -331,7 +336,7 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
     computeF2vanilla  a b     = (a - b) * (a - b)
     computePWM        a b     = a * (1.0 - b) + (1.0 - a) * b
     computeHet (na, sa) = 2.0 * fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
-    computeF3noNorm a b (nc, sc) =
+    computeF3 a b (nc, sc) =
         let c = computeFreq nc sc
             corrFac = 0.5 * computeHet (nc, sc) / fromIntegral sc
         in  computeF3vanilla a b c - corrFac
@@ -340,8 +345,6 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
             b = computeFreq nb sb
             corrFac = 0.5 * computeHet (na, sa) / fromIntegral sa + 0.5 * computeHet (nb, sb) / fromIntegral sb
         in  computeF2vanilla a b - corrFac
-    computeFSTdenom (na, sa) (nb, sb) =
-        computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
 pacReadOpts :: PackageReadOptions
@@ -364,8 +367,7 @@ processBlocks :: [FStatSpec] -> [BlockData] -> [(Double, Double, Double)]
 processBlocks statSpecs blocks = do
     let block_weights = map (fromIntegral . blockSiteCount) blocks
     (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
-    case fType of
-        F3star ->
+    if isRatio fType then
             let numerator_values = map ((!!0) . (!!i) . blockStatVal) blocks
                 numerator_norm = map ((!!1) . (!!i) . blockStatVal) blocks
                 denominator_values = map ((!!2) . (!!i) . blockStatVal) blocks
@@ -382,7 +384,7 @@ processBlocks statSpecs blocks = do
                     return $ (num / num_norm) / (denom / denom_norm)
                 (estimateJackknife, stdErrJackknife) = computeJackknifeOriginal full_estimate block_weights partial_estimates
             in  return (full_estimate, estimateJackknife, stdErrJackknife)
-        _ ->
+        else
             let values = map ((!!0) . (!!i) . blockStatVal) blocks
                 norm = map ((!!1) . (!!i) . blockStatVal) blocks
                 full_estimate = sum values / sum norm
@@ -394,12 +396,17 @@ processBlocks statSpecs blocks = do
                 (estimateJackknife, stdErrJackknife) = computeJackknifeOriginal full_estimate block_weights partial_estimates
             in  return (full_estimate, estimateJackknife, stdErrJackknife)
 
+isRatio :: FStatType -> Bool
+isRatio F3star     = True
+isRatio FSTvanilla = True
+isRatio FST        = True
+isRatio _          = False
+
 -- outer list: stats, inner list: estimates per block
 processBlockIndividually :: [FStatSpec] -> BlockData -> [Double]
 processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
     (FStatSpec fType _ _, statVals) <- zip statSpecs allStatVals
-    case fType of
-        F3 ->
+    if isRatio fType then
             let numerator_value = statVals !! 0
                 numerator_norm = statVals !! 1
                 denominator_value = statVals !! 2
@@ -407,7 +414,7 @@ processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
                 num_full = numerator_value / numerator_norm
                 denom_full = denominator_value / denominator_norm
             in  return $ num_full / denom_full
-        _ ->
+        else
             let value = statVals !! 0
                 norm = statVals !! 1
             in  return $ value / norm
