@@ -115,13 +115,13 @@ runFstats opts = do
     let statSpecsFiltered = filter isNonDegenerate statSpecs
     let degenerateStats = statSpecs \\ statSpecsFiltered
     unless (null degenerateStats) $ do
-        logInfo "Removed degenerate statistics:"
+        logInfo "Removed degenerate statistics (they will all be strictly zero):"
         mapM_ (logInfo . show) degenerateStats 
 
     -- ------- CHECKING WHETHER ENTITIES EXIST -----------
     -- check whether all individuals that are needed for the statistics are there, including individuals needed for the adhoc-group definitions in the config file
     let newGroups = map (Group . fst) groupDefs
-        collectedStats = collectStatSpecGroups statSpecs
+        collectedStats = collectStatSpecGroups statSpecsFiltered
         -- new groups can be used on the right hand side of further group definitions, that's why we explicitly exclude them here in the end of the expression
         allEntities = nub (concatMap (map underlyingEntity . snd) groupDefs ++ collectedStats) \\ newGroups
     checkIfAllEntitiesExist allEntities =<< getJointIndividualInfo allPackages
@@ -136,10 +136,10 @@ runFstats opts = do
     mapM_ (logInfo . show . posPacNameAndVersion) relevantPackages
 
     logInfo "Computing stats:"
-    mapM_ (logInfo . summaryPrintFstats) statSpecs
+    mapM_ (logInfo . summaryPrintFstats) statSpecsFiltered
     logA <- envLogAction
     inPlinkPopMode <- envInputPlinkMode
-    statsFold <- buildStatSpecsFold relevantPackages statSpecs
+    statsFold <- buildStatSpecsFold relevantPackages statSpecsFiltered
     blocks <- liftIO $ catch (
         runSafeT $ do
             (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
@@ -153,10 +153,10 @@ runFstats opts = do
             let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
             purely P.fold list (summaryStatsProd >-> printBlockInfoPipe logA)
         ) (throwIO . PoseidonGenotypeExceptionForward)
-    let jackknifeEstimates = processBlocks statSpecs blocks
-    let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
+    let jackknifeEstimates = processBlocks statSpecsFiltered blocks
+    let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecsFiltered - 1)]]
     let hasAscertainment = or $ do
-            FStatSpec _ _ maybeAsc <- statSpecs
+            FStatSpec _ _ maybeAsc <- statSpecsFiltered
             case maybeAsc of
                 Nothing -> return False
                 _       -> return True
@@ -168,7 +168,7 @@ runFstats opts = do
     let nrCols = length tableH
     let colSpecs = replicate nrCols (column expand def def def)
         tableB = do
-            (fstat, (estimateFull, estimateJN, stdErr), nrSites) <- zip3 statSpecs jackknifeEstimates nrSitesList
+            (fstat, (estimateFull, estimateJN, stdErr), nrSites) <- zip3 statSpecsFiltered jackknifeEstimates nrSitesList
             let FStatSpec fType slots maybeAsc = fstat
                 abcdStr = take 4 (map show slots ++ repeat "")
                 (asc1, asc2) = case maybeAsc of
@@ -197,8 +197,8 @@ runFstats opts = do
             hPutStrLn h . intercalate "\t" $ headerLine
             forM_ (zip [(1 :: Int)..] blocks) $ \(i, block)  -> do
                 let BlockData startPos endPos nrSites _ = block
-                    blockEstimates = processBlockIndividually statSpecs block
-                forM_ (zip statSpecs blockEstimates) $ \(statSpec, blockEstimate) -> do
+                    blockEstimates = processBlockIndividually statSpecsFiltered block
+                forM_ (zip statSpecsFiltered blockEstimates) $ \(statSpec, blockEstimate) -> do
                     let FStatSpec fType slots maybeAsc = statSpec
                         abcdStr = take 4 (map show slots ++ repeat "")
                         (asc1, asc2) = case maybeAsc of
@@ -337,7 +337,7 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
   where
     retWithNormAcc (Just x) = [x, 1.0]
     retWithNormAcc Nothing  = [0.0, 0.0]
-    -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
+    -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF), and FST from Bhatia et al. 2013.
     computeF4         a b c d = (a - b) * (c - d)
     computeF3vanilla  a b c   = (c - a) * (c - b)
     computeF2vanilla  a b     = (a - b) * (a - b)
@@ -426,5 +426,14 @@ processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
                 norm = statVals !! 1
             in  return $ value / norm
 
-isNonDegenerate :: StatSpec -> Bool
-isNonDegenerate ()
+
+isNonDegenerate :: FStatSpec -> Bool
+isNonDegenerate (FStatSpec F2         [a, b]       _) = a /= b
+isNonDegenerate (FStatSpec F2vanilla  [a, b]       _) = a /= b
+isNonDegenerate (FStatSpec FST        [a, b]       _) = a /= b
+isNonDegenerate (FStatSpec FSTvanilla [a, b]       _) = a /= b
+isNonDegenerate (FStatSpec F3         [a, b, c]    _) = c /= a && c /= b
+isNonDegenerate (FStatSpec F3vanilla  [a, b, c]    _) = c /= a && c /= b
+isNonDegenerate (FStatSpec F3star     [a, b, c]    _) = c /= a && c /= b
+isNonDegenerate (FStatSpec F4         [a, b, c, d] _) = a /= b && c /= d
+isNonDegenerate _                                     = True
