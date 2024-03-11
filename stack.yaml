@@ -6,7 +6,7 @@ packages:
 
 extra-deps:
   - git: https://github.com/poseidon-framework/poseidon-hs
-    commit: a760f94e963e171aeb884f855f910d53d92cdef5
+    commit: c4460ec52f64a47ff0a292a26828fa507802c9a5
   - table-layout-0.9.1.0
   - data-default-instances-base-0.1.0.1
   - sequence-formats-1.7.0
