@@ -1,4 +1,14 @@
 \documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+ \geometry{
+   a4paper,
+   top=20mm,
+   left=20mm,
+   right=20mm,
+   heightrounded=true
+ }
 \usepackage{amsmath, amssymb, graphics, setspace, hyperref}
 \usepackage{listings}
 \usepackage{xcolor}
@@ -20,7 +30,10 @@
 \date{Last update: September 2023}
 \maketitle
 
-The program \texttt{xerxes fstats} within the poseidon-hs package serves as a one-stop shop for various SNP-based statistics that can be computed from genotype data, including F-Statistics, pairwise mismatch rate, FSt and likely more statistics in the future. F-Statistics were defined in a series of papers by Nick Patterson, David Reich and others, and comprehensively formally described in \cite{Patterson2012-yq}. Interested readers may also consult \cite{Peter2016-ml} as a useful reference.
+\tableofcontents
+\vspace{10mm}
+
+The program \texttt{xerxes fstats} within the poseidon-analysis-hs package serves as a one-stop shop for various SNP-based statistics that can be computed from genotype data, including F-Statistics, pairwise mismatch rate, $F_\text{ST}$ and likely more statistics in the future. F-Statistics were defined in a series of papers by Nick Patterson, David Reich and others, and comprehensively formally described in \cite{Patterson2012-yq}. Interested readers may also consult \cite{Peter2016-ml} as a useful reference.
 
 \section{F-Statistics}
 
@@ -32,7 +45,7 @@ F3_\text{vanilla}(A, B; C) &= \langle (c-a)(c-b) \rangle\\
 F4(A, B; C, D) &= \langle (a-b)(c-d) \rangle
 \end{align}
 
-Here, capital letters A, B, C, D stand for individuals or groups of individuals, defined via a Mini-Language used in trident forge, or as group definitions in FStats-Configuration files described here: \url{http://www.poseidon-adna.org/$\#$/xerxes?id=input-via-a-configuraton-file.}
+Here, capital letters A, B, C, D stand for individuals or groups of individuals, defined via a Mini-Language used in trident forge, or as group definitions in FStats-Configuration files described here: \url{https://www.poseidon-adna.org/#/xerxes?id=input-via-a-configuraton-file}.
 
 Small letters a, b, c, d here stand for the observed allele frequencies (i.e. the fractions of observed non-missing alternative alleles over observed non-missing alleles within groups A, B, C, D). The average \(\langle \cdot\rangle\) is an average over all available SNPs. For example, we have
 
@@ -57,7 +70,7 @@ Here, \(a_i\) and \(b_i\) denote allele frequencies of entity A and B at SNP i. 
 Many of the population genetic use-cases and properties of F-Statistics (described in \cite{Patterson2012-yq}) are derived from \textit{population} allele frequencies, that is, precise frequencies of an entire population. In practice, however, we only have a finite number of samples (in the most extreme case, one individual) to estimate population frequencies. 
 
 More precisely, given \textit{ population }allele frequencies \(a'\) and \(b'\), we consider \textit{ sample }allele frequencies \(a\) and \(b\)
-as imperfect \textit{ estimators }of the population allele frequencies. 
+as imperfect \textit{estimators} of the population allele frequencies. 
 
 To reason about biases of these estimators, we first denote a noise-model. Under the assumption that the \(n\) samples of population A are independent samples, the sampling probability for observing \(k\) non-reference alleles within a sample of \(n\) samples, given a population frequency \(a'\) is a binomial distribution:
 
@@ -95,7 +108,7 @@ E\left( \text{F4}(a,b,c,d)\right) &=E((a-b)(c-d)) \\
 \end{split}
 \end{equation}
 
-In the second step we have made used of the fact that because the terms in the average-brackets are based on separate samples of individuals, the
+In the second step we have made use of the fact that because the terms in the average-brackets are based on separate samples of individuals, the
 average over their product factorises. So for example we have 
 
 \begin{equation}
@@ -103,7 +116,7 @@ average over their product factorises. So for example we have
 E(a c) =E(a) E(c) =a' c' .
 \end{equation}
 
-Now, the same is \textit{ not }true for quadratic terms. Concretely, consider the \(\text{vanilla}-F_2\) { }statistic:
+Now, the same is \textit{not} true for quadratic terms. Concretely, consider the vanilla-F2 statistic:
 
 \begin{equation}
 \begin{split}
@@ -132,10 +145,9 @@ or
 =\left(a'\right)^2+\frac{a'(1-a')}{n}
 \end{equation}
 
-In other words \(\left\langle a^2\right\rangle\) \textit{ overestimates }\((a')^2\) by a term inversely proportional to \(1/n\), so the smaller the
-sample size the larger the bias.
+In other words \(\left\langle a^2\right\rangle\) \textit{overestimates} \((a')^2\) by a term inversely proportional to \(1/n\), so the smaller the sample size the larger the bias.
 
-Fortunately, we can \textit{ correct} this bias, by using a different estimator for \((a')^2\). Specifically, we can try to simply subtract the term itself from the estimator, using \(a\) instead of \(a'\):
+Fortunately, we can \textit{correct} this bias, by using a different estimator for \((a')^2\). Specifically, we can try to simply subtract the term itself from the estimator, using \(a\) instead of \(a'\):
 
 \begin{lstlisting}
 
@@ -202,11 +214,11 @@ F_3(a,b,c) &= E\left( (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right) \\
 
 \subsection{Pseudo-haploid sample sizes and bias-correction}
 
-So, as we see, for estimators to be unbiased, we need to subtract terms from F2 and F3 statistics, which depend on the sample size. More specifically, on the number of chromosomes sampled to obtain allele frequency estimates. The usual case with high-quality diploid genetic data, is that given a sample from \(n_d\) diploid individuals, there are \(2n_d\) chromosomes. However, with low-quality ancient DNA, a common scheme to obtain genotype estimates is a simple random-sampling scheme of sequencing reads aligning to a given SNP position.
+So, as we see, for estimators to be unbiased, we need to subtract terms from F2 and F3 statistics, which depend on the sample size. More specifically, on the number of chromosomes sampled to obtain allele frequency estimates. The usual case with high-quality diploid genetic data is that given a sample from \(n_d\) diploid individuals, there are \(2n_d\) chromosomes. However, with low-quality ancient DNA, a common scheme to obtain genotype estimates is a simple random-sampling scheme of sequencing reads aligning to a given SNP position.
 
-In such a haploid sampling scheme, the resulting number of {``}chromosomes{''} that one uses for esitmating allele frequencies is \(n_d\) instead of \(2n_d\). 
+In such a haploid sampling scheme, the resulting number of {``}chromosomes{''} that one uses for estimating allele frequencies is \(n_d\) instead of \(2n_d\). 
 
-In \texttt{xerxes}, we make use of the {``}Genotype$\_$Ploidy{''} column in the Janno File, to compute the correct number of chromosomes, since the genotype file itself does not provide this information (it is always coded as pseudo-diploid, even if the calling is haploid). If this column is missing, or contains missing data, \texttt{xerxes} will output a warning and assume that the data is fully diploid!
+In \texttt{xerxes}, we make use of the {``}Genotype$\_$Ploidy{''} column in the .janno File, to compute the correct number of chromosomes, since the genotype file itself does not provide this information (it is always coded as pseudo-diploid, even if the calling is haploid). If this column is missing, or contains missing data, \texttt{xerxes} will output a warning and assume that the data is fully diploid!
 
 \section{Beyond F-Statistics}
 
@@ -253,7 +265,7 @@ F_3^*(a,b,c)=\frac{\left\langle (c-a)(c-b)-\frac{c(1-c)}{n_c-1}\right\rangle}{\l
 
 \subsection{$F_\text{ST}$}
 
-$F_\text{ST}$ is a measure for how differentiated two populations are, taking into account internal genetic variation. It is in spirit very similar to $F_2$, in that it becomes 0 if two populations are not differentiated at all (meaning they are effectively the same), and the more differentiated, the more positive is the measure. However, $F_\text{ST}$ is explicitly scaled in a way that exposes relative genetic drift. As derived in the excellent paper by \cite{Bhatia2013-qj}, we here use the so-called Hudson estimator, which is defined as 
+$F_\text{ST}$ is a measure for how differentiated two populations are, taking into account internal genetic variation. It is in spirit very similar to $F_2$, in that it becomes 0 if two populations are not differentiated at all (meaning they are effectively the same), and the more differentiated, the more positive is the measure. However, $F_\text{ST}$ is explicitly scaled in a way that exposes relative genetic drift. As derived by \cite{Bhatia2013-qj}, we here use the so-called Hudson estimator, which is defined as 
 
 \begin{equation}
 \text{FST}_\text{vanilla}(a',b')=\frac{\left\langle\left(a'-b'\right)^2\right\rangle}{\left\langle a' \left(1-b'\right)+\left(1-a'\right) b'\right\rangle}
@@ -327,9 +339,9 @@ We then first define the Jackknife estimate:
 
 $$\theta_J = g \theta_n - \sum_{j=1}^g (1 - m_j / n) \theta_{-j}$$
 
-Note that for many statistics, one can show that $\theta_J=\theta_n$, but that is not in general the case, and in fact not for all of the above statistics. In \texttt{xerxes fstats}, we report both the genome-wide estimate $\theta_n$ (called "Estimate\_Full")and the Jackknife estimate $\theta_J$ (called "Estimate\_Jackknife") in the output table. In general, for ease of communication and clarity of methods, the genome-wide estimate should be reported as the actual estimate.
+Note that for many statistics, one can show that $\theta_J=\theta_n$, but that is not in general the case, and in fact not for all of the above statistics. In \texttt{xerxes fstats}, we report both the genome-wide estimate $\theta_n$ (called "Estimate\_Full") and the Jackknife estimate $\theta_J$ (called "Estimate\_Jackknife") in the output table. In general, for ease of communication and clarity of methods, the genome-wide estimate should be reported as the actual estimate.
 
-We also can derive an estimate of the standard error, $\sigma_J$ of the Jackknife estimate (which we take to be also the standard error of the total estimate). As derived in \cite{Busing1999-ev}, it is given by:
+We also can derive an estimate of the standard error $\sigma_J$ of the Jackknife estimate (which we take to be also the standard error of the total estimate). As derived in \cite{Busing1999-ev}, it is given by:
 
 \begin{equation}
 \begin{split}
