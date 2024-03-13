@@ -1,3 +1,4 @@
+- 1.0.1.0: fixed a bug in the FST estimation, added more graceful errors in case of illegal input for fstats
 - 1.0.0.2: Switched to poseidon-hs v1.4.0.3 and a new compiler (GHC 9.4.7) and stackage snapshot version (LTS-21.17)
 - 1.0.0.1: Switched to poseidon-hs v1.4.0.2
 - 1.0.0.0: Some key updates:

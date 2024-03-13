@@ -15,7 +15,9 @@ import           Poseidon.Analysis.FStatsConfig (AscertainmentSpec (..),
                                                  FStatInput, FStatSpec (..),
                                                  FStatType (..), readFstatInput)
 import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
-                                                 PloidyVec, addGroupDefs,
+                                                 PloidyVec,
+                                                 XerxesException (..),
+                                                 addGroupDefs,
                                                  computeAlleleCount,
                                                  computeAlleleFreq,
                                                  computeJackknifeOriginal,
@@ -25,7 +27,7 @@ import           Poseidon.Analysis.Utils        (GenomPos, JackknifeMode (..),
 import           Control.Exception              (catch, throwIO)
 import           Control.Foldl                  (FoldM (..), impurely, list,
                                                  purely)
-import           Control.Monad                  (forM, forM_, unless)
+import           Control.Monad                  (forM, forM_, unless, when)
 import           Control.Monad.IO.Class         (MonadIO, liftIO)
 import           Data.IORef                     (IORef, modifyIORef', newIORef,
                                                  readIORef, writeIORef)
@@ -47,6 +49,7 @@ import           Poseidon.EntityTypes           (IndividualInfo (..),
                                                  determineRelevantPackages,
                                                  resolveUniqueEntityIndices,
                                                  underlyingEntity)
+import           Poseidon.Janno                 (JannoGenotypePloidy (..))
 import           Poseidon.Package               (PackageReadOptions (..),
                                                  PoseidonPackage (..),
                                                  defaultPackageReadOptions,
@@ -240,8 +243,10 @@ buildStatSpecsFold packages fStatSpecs = do
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
             case fType of
-                F3star -> liftIO $ VUM.replicate 4 0.0 --only F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
-                _      -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
+                F3star     -> liftIO $ VUM.replicate 4 0.0 -- F3star has four accumulators: one numerator, one denominator, and one normaliser for each of the two.
+                FSTvanilla -> liftIO $ VUM.replicate 4 0.0 -- same as with F3star
+                FST        -> liftIO $ VUM.replicate 4 0.0 -- same as with F3star
+                _          -> liftIO $ VUM.replicate 2 0.0 -- all other statistics have just one value and one normaliser.
         liftIO $ BlockAccumulator <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> pure (V.fromList listOfInnerVectors)
     return $ FoldM (step ploidyVec indivNames entityIndicesLookup blockAccum) (initialize blockAccum) (extract blockAccum)
   where
@@ -256,6 +261,7 @@ buildStatSpecsFold packages fStatSpecs = do
         let alleleCountLookupF = M.map (computeAlleleCount genoLine ploidyVec indivNames) entIndLookup
             alleleFreqLookupF  = M.map (computeAlleleFreq  genoLine ploidyVec indivNames) entIndLookup
         forM_ (zip [0..] fStatSpecs) $ \(i, fStatSpec) -> do
+            checkForIllegalSampleSizes ploidyVec entIndLookup fStatSpec
             -- loop over all statistics
             let maybeAccValues = computeFStatAccumulators fStatSpec alleleCountLookupF alleleFreqLookupF  -- compute the accumulating values for that site.
             forM_ (zip [0..] maybeAccValues) $ \(j, x) ->
@@ -302,33 +308,44 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
                 return $ ascFreq >= lo && ascFreq <= hi
     in  if ascCond then
             case (fType, slots) of
-                (F4,         [a, b, c, d]) -> retWithNormAcc $ computeF4         <$> caf a <*> caf b <*> caf c <*> caf d
-                (F3vanilla,  [a, b, c])    -> retWithNormAcc $ computeF3vanilla  <$> caf a <*> caf b <*> caf c
-                (F3,         [a, b, c])    -> retWithNormAcc $ computeF3noNorm   <$> caf a <*> caf b <*> cac c
-                (F2vanilla,  [a, b])       -> retWithNormAcc $ computeF2vanilla  <$> caf a <*> caf b
-                (PWM,        [a, b])       -> retWithNormAcc $ computePWM        <$> caf a <*> caf b
-                (Het,        [a])          -> retWithNormAcc $ computeHet        <$> cac a
-                (F2,         [a, b])       -> retWithNormAcc $ computeF2         <$> cac a <*> cac b
-                (FSTvanilla, [a, b])       -> retWithNormAcc $ computeFSTvanilla    (caf a)   (caf b)
-                (FST,        [a, b])       -> retWithNormAcc $ computeFST           (cac a)   (cac b)
-                (F3star,         [a, b, c])    ->
-                    retWithNormAcc (computeF3noNorm <$> caf a <*> caf b <*> cac c) ++
+                (F2vanilla, [a, b]) -> if a == b then [0.0, 1.0] else
+                    retWithNormAcc $ computeF2vanilla <$> caf a <*> caf b
+                (F2, [a, b]) -> if a == b then [0.0, 1.0] else
+                    retWithNormAcc $ computeF2 <$> cac a <*> cac b
+                (F3vanilla, [a, b, c]) -> if c == a || c == b then [0.0, 1.0] else
+                    retWithNormAcc $ computeF3vanilla <$> caf a <*> caf b <*> caf c
+                (F3, [a, b, c]) -> if c == a || c == b then [0.0, 1.0]
+                    else retWithNormAcc $ computeF3 <$> caf a <*> caf b <*> cac c
+                (F3star, [a, b, c]) -> if c == a || c == b then [0.0, 1.0, 1.0, 1.0] else
+                    retWithNormAcc (computeF3 <$> caf a <*> caf b <*> cac c) ++
                     retWithNormAcc (computeHet <$> cac c)
+                (F4, [a, b, c, d]) -> if a == b || c == d then [0.0, 1.0] else
+                    retWithNormAcc $ computeF4 <$> caf a <*> caf b <*> caf c <*> caf d
+                (PWM, [a, b]) -> retWithNormAcc $ computePWM <$> caf a <*> caf b
+                (Het, [a]) -> retWithNormAcc $ computeHet <$> cac a
+                (FSTvanilla, [a, b]) -> if a == b then [0.0, 1.0, 1.0, 1.0] else
+                    retWithNormAcc (computeF2vanilla <$> caf a <*> caf b) ++
+                    retWithNormAcc (computePWM <$> caf a <*> caf b)
+                (FST, [a, b]) -> if a == b then [0.0, 1.0, 1.0, 1.0] else
+                    retWithNormAcc (computeF2 <$> cac a <*> cac b) ++
+                    retWithNormAcc (computePWM <$> caf a <*> caf b)
                 _ -> error "should never happen"
         else
             case fType of
-                F3 -> [0.0, 0.0, 0.0, 0.0]
-                _  -> [0.0, 0.0]
+                F3         -> [0.0, 0.0, 0.0, 0.0]
+                FSTvanilla -> [0.0, 0.0, 0.0, 0.0]
+                FST        -> [0.0, 0.0, 0.0, 0.0]
+                _          -> [0.0, 0.0]
   where
     retWithNormAcc (Just x) = [x, 1.0]
     retWithNormAcc Nothing  = [0.0, 0.0]
-    -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF)
+    -- these formulas are mostly taken from Patterson et al. 2012 Appendix A (page 25 in the PDF), and FST from Bhatia et al. 2013.
     computeF4         a b c d = (a - b) * (c - d)
     computeF3vanilla  a b c   = (c - a) * (c - b)
     computeF2vanilla  a b     = (a - b) * (a - b)
     computePWM        a b     = a * (1.0 - b) + (1.0 - a) * b
     computeHet (na, sa) = 2.0 * fromIntegral (na * (sa - na)) / fromIntegral (sa * (sa - 1))
-    computeF3noNorm a b (nc, sc) =
+    computeF3 a b (nc, sc) =
         let c = computeFreq nc sc
             corrFac = 0.5 * computeHet (nc, sc) / fromIntegral sc
         in  computeF3vanilla a b c - corrFac
@@ -337,19 +354,6 @@ computeFStatAccumulators (FStatSpec fType slots maybeAsc) alleleCountF alleleFre
             b = computeFreq nb sb
             corrFac = 0.5 * computeHet (na, sa) / fromIntegral sa + 0.5 * computeHet (nb, sb) / fromIntegral sb
         in  computeF2vanilla a b - corrFac
-    computeFSTvanilla maybeA maybeB =
-        case (maybeA, maybeB) of
-            (Just a, Just b) ->
-                let num = (a - b)^(2 :: Int)
-                    denom = a * (1 - b) + b * (1 - a)
-                in  if denom > 0 then Just (num / denom) else Nothing
-            _ -> Nothing
-    computeFST maybeNaSa maybeNbSb = case (maybeNaSa, maybeNbSb) of
-        (Just (na, sa), Just (nb, sb)) ->
-            let num = computeF2 (na, sa) (nb, sb)
-                denom = computeF2 (na, sa) (nb, sb) + 0.5 * computeHet (na, sa) + 0.5 * computeHet (nb, sb)
-            in  if denom > 0 then Just (num / denom) else Nothing
-        _ -> Nothing
     computeFreq na sa = fromIntegral na / fromIntegral sa
 
 pacReadOpts :: PackageReadOptions
@@ -372,8 +376,7 @@ processBlocks :: [FStatSpec] -> [BlockData] -> [(Double, Double, Double)]
 processBlocks statSpecs blocks = do
     let block_weights = map (fromIntegral . blockSiteCount) blocks
     (i, FStatSpec fType _ _ ) <- zip [0..] statSpecs
-    case fType of
-        F3star ->
+    if isRatio fType then
             let numerator_values = map ((!!0) . (!!i) . blockStatVal) blocks
                 numerator_norm = map ((!!1) . (!!i) . blockStatVal) blocks
                 denominator_values = map ((!!2) . (!!i) . blockStatVal) blocks
@@ -390,7 +393,7 @@ processBlocks statSpecs blocks = do
                     return $ (num / num_norm) / (denom / denom_norm)
                 (estimateJackknife, stdErrJackknife) = computeJackknifeOriginal full_estimate block_weights partial_estimates
             in  return (full_estimate, estimateJackknife, stdErrJackknife)
-        _ ->
+        else
             let values = map ((!!0) . (!!i) . blockStatVal) blocks
                 norm = map ((!!1) . (!!i) . blockStatVal) blocks
                 full_estimate = sum values / sum norm
@@ -402,12 +405,17 @@ processBlocks statSpecs blocks = do
                 (estimateJackknife, stdErrJackknife) = computeJackknifeOriginal full_estimate block_weights partial_estimates
             in  return (full_estimate, estimateJackknife, stdErrJackknife)
 
+isRatio :: FStatType -> Bool
+isRatio F3star     = True
+isRatio FSTvanilla = True
+isRatio FST        = True
+isRatio _          = False
+
 -- outer list: stats, inner list: estimates per block
 processBlockIndividually :: [FStatSpec] -> BlockData -> [Double]
 processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
     (FStatSpec fType _ _, statVals) <- zip statSpecs allStatVals
-    case fType of
-        F3 ->
+    if isRatio fType then
             let numerator_value = statVals !! 0
                 numerator_norm = statVals !! 1
                 denominator_value = statVals !! 2
@@ -415,7 +423,46 @@ processBlockIndividually statSpecs (BlockData _ _ _ allStatVals) = do
                 num_full = numerator_value / numerator_norm
                 denom_full = denominator_value / denominator_norm
             in  return $ num_full / denom_full
-        _ ->
+        else
             let value = statVals !! 0
                 norm = statVals !! 1
             in  return $ value / norm
+
+checkForIllegalSampleSizes :: (MonadIO m) => PloidyVec -> EntityIndicesLookup -> FStatSpec -> m ()
+checkForIllegalSampleSizes ploidyVec entIndLookup (FStatSpec fType slots _) = do
+    case fType of
+        F2 -> do
+            let nA = getNrHaplotypes (slots !! 0)
+            let nB = getNrHaplotypes (slots !! 1)
+            when (nA < 2 || nB < 2) $
+                liftIO . throwIO $ FStatException "Unbiased F2(A, B) estimators need both A and B \
+                        \to have more than one haplotype. You might want to try F2vanilla"
+        FST -> do
+            let nA = getNrHaplotypes (slots !! 0)
+            let nB = getNrHaplotypes (slots !! 1)
+            when (nA < 2 || nB < 2) $
+                liftIO . throwIO $ FStatException "Unbiased FST(A, B) estimators need both A and B \
+                        \to have more than one haplotype. You might want to try FSTvanilla"
+        F3 -> do
+            let nC = getNrHaplotypes (slots !! 2)
+            when (nC < 2) $
+                liftIO . throwIO $ FStatException "Unbiased F3(A, B; C) estimators need C \
+                        \to have more than one haplotype. You might want to try F3vanilla"
+        F3star -> do
+            let nC = getNrHaplotypes (slots !! 2)
+            when (nC < 2) $
+                liftIO . throwIO $ FStatException "Unbiased F3star(A, B; C) estimators need C \
+                        \to have more than one haplotype. You might want to try F3vanilla"
+        Het -> do
+            let nA = getNrHaplotypes (slots !! 0)
+            when (nA < 2) $
+                liftIO . throwIO $ FStatException "Het(A) requires A \
+                        \to have more than one haplotype"
+        _  -> return ()
+  where
+    getNrHaplotypes :: PoseidonEntity -> Int
+    getNrHaplotypes entity =
+        let inds = entIndLookup M.! entity
+        in  sum . map (haps . (ploidyVec V.!)) $ inds
+    haps Haploid = 1
+    haps Diploid = 2

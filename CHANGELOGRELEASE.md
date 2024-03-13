@@ -1,3 +1,15 @@
+# V1.0.1.0: FST fix and better user input checks
+
+This release fixes a bug in the estimation of FST. We have now exactly implemented the estimator presented in Bhatia et al. 2013
+(see whitepaper), and confirmed numerical equivalence with estimation by admixtools. 
+
+We have also now checked for degenerate statistics (for example F2(A, A) or F3(A, B, A)) and in those cases now output exactly zero.
+Previously, due to bias corrections, results could become negative.
+
+Finally, we have implemented a check for illegal sample sizes. In particular for F3(A, B, C), where C is a haploid outgroup, we now 
+throw a helpful error that one should rather use F3vanilla, since F3 in that case is undefined due to its use of the heterozygosity of
+C in the bias-correction term (see whitepaper).
+
 # V1.0.0.2: performance-fix due to update of poseidon-hs dependency
 
 This release simply updates the dependency on poseidon-hs, which in turn [fixed a performance leak](https://github.com/poseidon-framework/poseidon-hs/releases/tag/v1.4.0.3) with our entity selection framework.
