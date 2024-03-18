@@ -12,13 +12,26 @@
 \usepackage{amsmath, amssymb, graphics, setspace, hyperref}
 \usepackage{listings}
 \usepackage{xcolor}
-\usepackage[style=authoryear]{biblatex}
+% citations
+\usepackage[
+    backend=biber,
+    style=numeric,
+    sorting=none
+]{biblatex}
 \addbibresource{references.bib}
 \definecolor{backcolour}{rgb}{0.95,0.95,0.92}
 \lstdefinestyle{mystyle}{
     backgroundcolor=\color{backcolour}
 }
 \lstset{style=mystyle}
+% for line numbers
+\usepackage{lineno}
+\linenumbers
+% for spacing
+\usepackage{setspace}
+\onehalfspacing
+% only one space after period
+\frenchspacing
 
 \renewcommand{\arraystretch}{1.5}
 
@@ -27,7 +40,7 @@
 
 \title{Xerxes Theoretical Background - Derivations and Statistical Details of the fstats command}
 \author{Stephan Schiffels\\Max Planck Institute for Evolutionary Anthropology\\ Leipzig, Germany}
-\date{Last update: September 2023}
+\date{Last update: March 2024}
 \maketitle
 
 \tableofcontents
