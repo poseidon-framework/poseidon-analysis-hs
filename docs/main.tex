@@ -16,7 +16,11 @@
 \usepackage[
     backend=biber,
     style=numeric,
-    sorting=none
+    sorting=none,
+    isbn=false,
+    issn=false,
+    url=false,
+    date=year
 ]{biblatex}
 \addbibresource{references.bib}
 \definecolor{backcolour}{rgb}{0.95,0.95,0.92}
@@ -39,7 +43,7 @@
 \begin{document}
 
 \title{Xerxes Theoretical Background - Derivations and Statistical Details of the fstats command}
-\author{Stephan Schiffels\\Max Planck Institute for Evolutionary Anthropology\\ Leipzig, Germany}
+\author{Stephan Schiffels}
 \date{Last update: March 2024}
 \maketitle
 
@@ -163,7 +167,6 @@ In other words \(\left\langle a^2\right\rangle\) \textit{overestimates} \((a')^2
 Fortunately, we can \textit{correct} this bias, by using a different estimator for \((a')^2\). Specifically, we can try to simply subtract the term itself from the estimator, using \(a\) instead of \(a'\):
 
 \begin{lstlisting}
-
 In[3]:= Expectation[k^2/n^2 - (k/n (1 - k/n))/n,
  k Distributed[BinomialDistribution[n, a]]   
              2    2  2
