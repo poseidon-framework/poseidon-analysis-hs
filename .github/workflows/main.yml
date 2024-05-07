@@ -1,42 +1,26 @@
-# https://kodimensional.dev/github-actions
 name: CI
 
-# Trigger the workflow on push or pull request, but only for the main branch
+# trigger the workflow on push or pull request, but only for the master branch
 on:
   pull_request:
   push:
     branches: [main]
 
 jobs:
-  stack:
-    name: stack / ghc ${{ matrix.ghc }}
+  test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        stack: ["latest"]
-        ghc: ["9.4.7"]
-
     steps:
-    # setup and loading cache
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Setup Haskell
-      uses: haskell/actions/setup@v2
-      with:
-        ghc-version: ${{ matrix.ghc }}
-        enable-stack: true
-        stack-version: ${{ matrix.stack }}
-
-    - name: Cache ~/.stack
-      uses: freckle/stack-cache-action@v2
-
-    - name: Build
-      run: |
-        stack build \
-        --system-ghc \
-        --test \
-        --coverage \
-        --bench \
-        --no-run-benchmarks \
-        --pedantic
+      - uses: actions/checkout@v4
+      - name: Install Haskell and install+test the module
+        uses: freckle/stack-action@v5
+        with:
+          stack-arguments: --coverage
+      # prepare and upload test coverage report
+      - name: Create codecov coverage report
+        uses: 8c6794b6/hpc-codecov-action@v4
+        with:
+          target: stack:xerxes-tests
+      - name: Upload coverage to codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # set in organization settings
