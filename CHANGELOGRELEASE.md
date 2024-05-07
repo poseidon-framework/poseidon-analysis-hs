@@ -1,3 +1,15 @@
+# V1.0.1.1: new release pipeline
+
+This minor release replaces the pipeline to produce static `xerxes` executables for every release.
+
+Just like `trident`, `xerxes` will now be available in the following pre-compiled versions:
+
+- `xerxes-conda-linux` (for bioconda)
+- `xerxes-Linux` (build on Ubuntu 20.04 for X64 architecture)
+- `xerxes-macOS-ARM64` (build on macOS 14 for ARM64 architecture)
+- `xerxes-macOS-X64` (build on macOS 13 for X64 architecture)
+- `xerxes-Windows`
+
 # V1.0.1.0: FST fix and better user input checks
 
 This release fixes a bug in the estimation of FST. We have now exactly implemented the estimator presented in Bhatia et al. 2013

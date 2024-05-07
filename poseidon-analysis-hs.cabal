@@ -1,5 +1,5 @@
 name:                poseidon-analysis-hs
-version:             1.0.1.0
+version:             1.0.1.1
 synopsis:            A package with analysis-tools to work with Poseidon Genotype Data
 description:         The tools in this package analyse Poseidon-formatted genotype databases, a modular system for storing genotype data from thousands of individuals.
 license:             MIT
