@@ -18,7 +18,6 @@
     style=numeric,
     sorting=none,
     isbn=false,
-    issn=false,
     url=false,
     date=year
 ]{biblatex}
@@ -345,7 +344,7 @@ All of the above statistics are computed genome-wide, but we use a Block-Jackkni
 The key idea is to evaluate the statistics not only genome-wide, but also for subsets of the genome. For these subsets, consider the entire data being divided into $g$ consecutive blocks, of equal or different sizes of $m_j$ sites in each block, where $j=1\ldots g$.
 
 Let 
-$$n = \sum_{j=1}^g$$
+$$n = \sum_{j=1}^g m_j$$
 
 be the total number of sites.
 
