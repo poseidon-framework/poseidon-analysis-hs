@@ -96,7 +96,7 @@ instance FromJSON FStatType where
         "F3"         -> return F3
         "F3star"     -> return F3star
         "F2"         -> return F2
-        "VSTvanilla" -> return FSTvanilla
+        "FSTvanilla" -> return FSTvanilla
         "FST"        -> return FST
         "PWM"        -> return PWM
         "Het"        -> return Het
