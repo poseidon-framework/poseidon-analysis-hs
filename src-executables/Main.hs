@@ -2,6 +2,8 @@
 
 import           Poseidon.Analysis.CLI.FStats            (FstatsOptions (..),
                                                           runFstats, runParser)
+import           Poseidon.Analysis.CLI.PcProject         (PcProjectOpts (..),
+                                                          runPcProject)
 import           Poseidon.Analysis.CLI.RAS               (FreqSpec (..),
                                                           RASOptions (..),
                                                           runRAS)
@@ -48,6 +50,7 @@ data Subcommand =
       CmdFstats FstatsOptions
     | CmdRAS RASOptions
     | CmdAdmixPops AdmixPopsOptions
+    | CmdPcProject PcProjectOpts
 
 main :: IO ()
 main = do
@@ -71,6 +74,7 @@ runCmd o = case o of
     CmdFstats opts    -> runFstats opts
     CmdRAS opts       -> runRAS opts
     CmdAdmixPops opts -> runAdmixPops opts
+    CmdPcProject opts -> runPcProject opts
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*>
@@ -100,6 +104,7 @@ subcommandParser =
     OP.subparser (
         OP.command "fstats" fstatsOptInfo <>
         OP.command "ras" rasOptInfo <>
+        OP.command "pcproject" pcProjectOptInfo <>
         OP.commandGroup "Analysis commands:"
     ) <|>
     OP.subparser (
@@ -111,9 +116,11 @@ subcommandParser =
         (OP.progDesc "Compute f-statistics on groups and invidiuals within and across Poseidon packages")
     rasOptInfo = OP.info (OP.helper <*> (CmdRAS <$> rasOptParser))
         (OP.progDesc "Compute RAS statistics on groups and individuals within and across Poseidon packages")
+    pcProjectOptInfo = OP.info (OP.helper <*> (CmdPcProject <$> pcProjectOptParser))
+        (OP.progDesc "Project samples onto Principal Component axes given via SNP loadings")
     admixPopsOptInfo = OP.info (OP.helper <*> (CmdAdmixPops <$> admixPopsOptParser))
         (OP.progDesc "Generate individuals with randomized genotype profiles based on admixture proportions (experimental)")
-
+    
 
 fstatsOptParser :: OP.Parser FstatsOptions
 fstatsOptParser = FstatsOptions <$> parseBasePaths
@@ -232,6 +239,16 @@ parseNoTransitions = OP.switch (OP.long "noTransitions" <> OP.help "Skip transit
 parseBedFile :: OP.Parser (Maybe FilePath)
 parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An optional bed file that gives sites to be \
     \included in the analysis." <> OP.value Nothing)
+
+pcProjectOptParser :: OP.Parser PcProjectOpts
+pcProjectOptParser = PcProjectOpts <$>
+    parseGenoSource <*>
+    parseSnpLoadingFile <*>
+    parseJackknife <*>
+    parseEntities
+
+parseEntities :: OP.Parser EntityInput
+entitySpecParser 
 
 admixPopsOptParser :: OP.Parser AdmixPopsOptions
 admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
