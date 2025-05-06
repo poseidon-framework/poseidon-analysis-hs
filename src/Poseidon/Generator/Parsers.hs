@@ -94,14 +94,14 @@ parseSpatialTemporalPosition = do
 pInt :: P.Parser Int
 pInt = read <$> P.many1 P.digit
 
-pLat :: P.Parser Latitude
+pLat :: P.Parser JannoLatitude
 pLat = do
     latP <- P.sign <*> P.floating2 True
     guard (latP >= -90 && latP <= 90) P.<?> "valid latitude (-90 to 90)"
-    return (Latitude latP)
+    return (JannoLatitude latP)
 
-pLon :: P.Parser Longitude
+pLon :: P.Parser JannoLongitude
 pLon = do
     lonP <- P.sign <*> P.floating2 True
     guard (lonP >= -180 && lonP <= 180) P.<?> "valid longitude (-180 to 180)"
-    return (Longitude lonP)
+    return (JannoLongitude lonP)

@@ -43,6 +43,6 @@ data IndWithPosition = IndWithPosition {
 
 data SpatialTemporalPosition = SpatialTemporalPosition {
       time :: Int
-    , lat  :: Latitude
-    , lon  :: Longitude
+    , lat  :: JannoLatitude
+    , lon  :: JannoLongitude
 } deriving (Show)

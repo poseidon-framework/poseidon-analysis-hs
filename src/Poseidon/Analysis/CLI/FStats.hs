@@ -60,7 +60,7 @@ import           Poseidon.Package               (PackageReadOptions (..),
 import           Poseidon.Utils                 (PoseidonException (..),
                                                  PoseidonIO, envInputPlinkMode,
                                                  envLogAction, logInfo,
-                                                 logWithEnv)
+                                                 logWithEnv, envErrorLength)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)
@@ -136,9 +136,10 @@ runFstats opts = do
     logA <- envLogAction
     inPlinkPopMode <- envInputPlinkMode
     statsFold <- buildStatSpecsFold relevantPackages statSpecs
+    errLength <- envErrorLength
     blocks <- liftIO $ catch (
         runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
+            eigenstratProd <- getJointGenotypeData logA False relevantPackages Nothing
             let eigenstratProdFiltered =
                     eigenstratProd >->
                     P.filter chromFilter >->
@@ -148,7 +149,7 @@ runFstats opts = do
                     JackknifePerN chunkSize -> chunkEigenstratByNrSnps chunkSize eigenstratProdFiltered
             let summaryStatsProd = impurely foldsM statsFold eigenstratProdInChunks
             purely P.fold list (summaryStatsProd >-> printBlockInfoPipe logA)
-        ) (throwIO . PoseidonGenotypeExceptionForward)
+        ) (throwIO . PoseidonGenotypeExceptionForward errLength)
     let jackknifeEstimates = processBlocks statSpecs blocks
     let nrSitesList = [sum [(vals !! i) !! 1 | BlockData _ _ _ vals <- blocks] | i <- [0..(length statSpecs - 1)]]
     let hasAscertainment = or $ do
@@ -238,7 +239,7 @@ buildStatSpecsFold packages fStatSpecs = do
     ploidyVec <- makePloidyVec . getJointJanno $ packages
     entityIndicesLookup <- do
         let collectedSpecs = collectStatSpecGroups fStatSpecs
-        entityIndices <- sequence [resolveUniqueEntityIndices [s] indInfoCollection | s <- collectedSpecs]
+        entityIndices <- sequence [resolveUniqueEntityIndices False [s] indInfoCollection | s <- collectedSpecs]
         return . M.fromList . zip collectedSpecs $ entityIndices
     blockAccum <- do
         listOfInnerVectors <- forM fStatSpecs $ \(FStatSpec fType _ _) -> do
