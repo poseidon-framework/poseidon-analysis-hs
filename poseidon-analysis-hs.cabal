@@ -16,6 +16,7 @@ library
     exposed-modules:    Poseidon.Analysis.FStatsConfig, Poseidon.Analysis.RASconfig, Poseidon.Analysis.Utils,
                         Poseidon.Analysis.CLI.FStats, Poseidon.Analysis.CLI.RAS,
                         Poseidon.Generator.CLI.AdmixPops, Poseidon.Generator.CLI.SpaceTime,
+                        Poseidon.Analysis.CLI.PCproject,
                         Poseidon.Generator.Parsers, Poseidon.Generator.Types,
                         Poseidon.Generator.SampleGeno, Poseidon.Generator.Utils
     hs-source-dirs:     src

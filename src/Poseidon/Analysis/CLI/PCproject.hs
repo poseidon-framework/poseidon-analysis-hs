@@ -1,6 +1,4 @@
-module Poseidon.Analysis.CLI.PCproject (
-    runPcProject
-) where
+module Poseidon.Analysis.CLI.PCproject where
 
 import           Poseidon.Analysis.Utils (JackknifeMode)
 
@@ -14,7 +12,7 @@ import           Poseidon.Package        (PackageReadOptions (..),
                                           readPoseidonPackageCollection)
 import           Poseidon.Utils          (PoseidonIO, logInfo)
 
-data PcProjectOpts = PcProjectOpts
+data PCprojectOpts = PCprojectOpts
     { _pcGenoSource      :: [GenoDataSource]
     , _pcSnpLoadingsFile :: FilePath
     , _pcJackknifeMode   :: JackknifeMode
@@ -28,10 +26,10 @@ pacReadOpts = defaultPackageReadOptions {
     , _readOptGenoCheck        = True
     }
 
-runPcProject :: PcProjectOpts -> PoseidonIO ()
-runPcProject (PcProjectOpts genoSources snpLoadingFile jackknifeMode entityInputs) = do
+runPCproject :: PCprojectOpts -> PoseidonIO ()
+runPCproject (PCprojectOpts genoSources snpLoadingFile jackknifeMode entityInputs) = do
 
-    properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDir x | x@PacBaseDir {} <- genoSources]
+    properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
     pseudoPackages <- mapM makePseudoPackageFromGenotypeData [getGenoDirect x | x@GenoDirect {} <- genoSources]
     logInfo $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
     let allPackages = properPackages ++ pseudoPackages

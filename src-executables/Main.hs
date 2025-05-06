@@ -2,8 +2,8 @@
 
 import           Poseidon.Analysis.CLI.FStats            (FstatsOptions (..),
                                                           runFstats, runParser)
-import           Poseidon.Analysis.CLI.PcProject         (PcProjectOpts (..),
-                                                          runPcProject)
+import           Poseidon.Analysis.CLI.PCproject         (PCprojectOpts (..),
+                                                          runPCproject)
 import           Poseidon.Analysis.CLI.RAS               (FreqSpec (..),
                                                           RASOptions (..),
                                                           runRAS)
