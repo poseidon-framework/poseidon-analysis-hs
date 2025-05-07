@@ -58,7 +58,7 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  getJointJanno,
                                                  readPoseidonPackageCollection)
 import           Poseidon.Utils                 (PoseidonException (..),
-                                                 PoseidonIO, envInputPlinkMode,
+                                                 PoseidonIO,
                                                  envLogAction, logInfo,
                                                  logWithEnv, envErrorLength)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
@@ -134,7 +134,6 @@ runFstats opts = do
     logInfo "Computing stats:"
     mapM_ (logInfo . summaryPrintFstats) statSpecs
     logA <- envLogAction
-    inPlinkPopMode <- envInputPlinkMode
     statsFold <- buildStatSpecsFold relevantPackages statSpecs
     errLength <- envErrorLength
     blocks <- liftIO $ catch (
