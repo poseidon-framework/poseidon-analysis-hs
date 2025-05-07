@@ -44,7 +44,7 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointJanno,
                                               readPoseidonPackageCollection)
 import           Poseidon.Utils              (PoseidonException (..),
-                                              PoseidonIO, envInputPlinkMode,
+                                              PoseidonIO, envErrorLength,
                                               envLogAction, logInfo, logWithEnv)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
@@ -137,10 +137,10 @@ runRAS rasOpts = do
 
     -- run the fold and retrieve the block data needed for RAS computations and output
     logA <- envLogAction
-    inPlinkPopMode <- envInputPlinkMode
+    errLength <- envErrorLength
     blockData <- liftIO $ catch (
         runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
+            eigenstratProd <- getJointGenotypeData logA False relevantPackages Nothing
             let eigenstratProdFiltered =
                     bedFilterFunc (eigenstratProd >->
                                     P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->
@@ -152,7 +152,7 @@ runRAS rasOpts = do
             let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
             logWithEnv logA . logInfo $ "performing counts"
             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-        ) (throwIO . PoseidonGenotypeExceptionForward)
+        ) (throwIO . PoseidonGenotypeExceptionForward errLength)
 
     -- outputting and computing results
     logInfo "collating results"
@@ -250,9 +250,9 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
     ploidyVec <- makePloidyVec . getJointJanno $ packages
     outgroupI <- case maybeOutgroup of
             Nothing -> return []
-            Just o  -> resolveUniqueEntityIndices [o] indInfoCollection
-    leftI <- sequence [resolveUniqueEntityIndices [l] indInfoCollection | l <- popLefts]
-    rightI <- sequence [resolveUniqueEntityIndices [r] indInfoCollection | r <- popRights]
+            Just o  -> resolveUniqueEntityIndices False [o] indInfoCollection
+    leftI <- sequence [resolveUniqueEntityIndices False [l] indInfoCollection | l <- popLefts]
+    rightI <- sequence [resolveUniqueEntityIndices False [r] indInfoCollection | r <- popRights]
     let nL = length popLefts
         nR = length popRights
     let indivNames = map indInfoName (fst indInfoCollection)
