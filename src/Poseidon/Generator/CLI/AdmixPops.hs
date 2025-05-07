@@ -26,7 +26,6 @@ import           SequenceFormats.Plink         (eigenstratInd2PlinkFam,
                                                 writePlink)
 import           System.Directory              (createDirectoryIfMissing)
 import           System.FilePath               (takeBaseName, (<.>), (</>))
-import Poseidon.CLI.OptparseApplicativeParsers (parseGenotypeSNPSet)
 
 data AdmixPopsMethodSettings =
     PerSNP {
@@ -41,8 +40,7 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixIndWithAdmixtureSet     :: [RequestedInd]
     , _admixIndWithAdmixtureSetFile :: Maybe FilePath
     , _admixMethodSettings          :: AdmixPopsMethodSettings
-    , _admixOutFormat               :: GenotypeOutFormatSpec
-    , _admixOutZip                  :: Bool
+    , _admixOutFormat               :: GenotypeFormatSpec
     , _admixOutPath                 :: FilePath
     , _admixOutPacName              :: Maybe String
     , _admixOutputPlinkPopMode      :: PlinkPopNameMode
@@ -57,7 +55,6 @@ runAdmixPops (
         popsWithFracsFile
         methodSetting
         outFormat
-        outZip
         outPath
         maybeOutName
         outPlinkPopMode
@@ -97,27 +94,11 @@ runAdmixPops (
     logInfo $ "Writing to directory (will be created if missing): " ++ outPath
     liftIO $ createDirectoryIfMissing True outPath
     -- compile genotype data structure
-    let outFiles = case (outFormat, outZip) of
-            (GenotypeOutFormatEigenstrat, False) -> [outName <.> ".ind", outName <.> ".snp", outName <.> ".geno"]
-            (GenotypeOutFormatPlink,      False) -> [outName <.> ".fam", outName <.> ".bim", outName <.> ".bed"]
-            (GenotypeOutFormatVCF,        False) -> [outName <.> ".vcf"]
-            (GenotypeOutFormatEigenstrat, True)  -> [outName <.> ".ind", outName <.> ".snp.gz", outName <.> ".geno.gz"]
-            (GenotypeOutFormatPlink,      True)  -> [outName <.> ".fam", outName <.> ".bim.gz", outName <.> ".bed.gz"]
-            (GenotypeOutFormatVCF,        True)  -> [outName <.> ".vcf.gz"]
-    let gFileSpec = case outFormat of
-            GenotypeOutFormatEigenstrat ->
-                GenotypeEigenstrat (outFiles !! 0) Nothing (outFiles !! 1) Nothing (outFiles !! 2) Nothing
-            GenotypeOutFormatPlink      -> 
-                GenotypePlink      (outFiles !! 0) Nothing (outFiles !! 1) Nothing (outFiles !! 2) Nothing
-            GenotypeOutFormatVCF        -> GenotypeVCF (outFiles !! 0) Nothing
-
-    let snpSet =
-            case mapMaybe (genotypeSnpSet . posPacGenotypeData) allPackages of
-                [] -> Nothing
-                s  -> Just $ snpSetMergeList s False
-
-    let genotypeData = GenotypeDataSpec gFileSpec snpSet
-    pac <- newMinimalPackageTemplate outPath outName genotypeData
+    let (outInd, outSnp, outGeno) = case outFormat of
+            GenotypeFormatEigenstrat -> (outName <.> ".ind", outName <.> ".snp", outName <.> ".geno")
+            GenotypeFormatPlink -> (outName <.> ".fam", outName <.> ".bim", outName <.> ".bed")
+    let genotypeData = GenotypeDataSpec outFormat outGeno Nothing outSnp Nothing outInd Nothing Nothing
+        pac = newMinimalPackageTemplate outPath outName genotypeData
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
     logInfo "Compiling individuals"
@@ -125,13 +106,12 @@ runAdmixPops (
     currentTime <- liftIO getCurrentTime
     liftIO $ catch (
         runSafeT $ do
-            eigenstratProd <- getJointGenotypeData logA False relevantPackages Nothing
+            (_, eigenstratProd) <- getJointGenotypeData logA False outPlinkPopMode relevantPackages Nothing
             let (outG, outS, outI) = (outPath </> outGeno, outPath </> outSnp, outPath </> outInd)
             let newIndEntries = map (\x -> EigenstratIndEntry (_indName x) Unknown (_groupName x)) preparedInds
             let outConsumer = case outFormat of
-                    GenotypeOutFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
-                    GenotypeOutFormatPlink      -> writePlink      outG outS outI (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
-                    GenotypeOutFormatVCF        -> writeVCF 
+                    GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
+                    GenotypeFormatPlink      -> writePlink      outG outS outI (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
             case methodSetting of
                 PerSNP marginalizeMissing -> do
                     runEffect $ eigenstratProd >->
