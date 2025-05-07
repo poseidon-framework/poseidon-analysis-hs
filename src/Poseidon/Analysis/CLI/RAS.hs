@@ -44,8 +44,8 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointJanno,
                                               readPoseidonPackageCollection)
 import           Poseidon.Utils              (PoseidonException (..),
-                                              PoseidonIO,
-                                              envLogAction, logInfo, logWithEnv, envErrorLength)
+                                              PoseidonIO, envErrorLength,
+                                              envLogAction, logInfo, logWithEnv)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)

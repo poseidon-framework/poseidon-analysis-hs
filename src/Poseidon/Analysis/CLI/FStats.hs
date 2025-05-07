@@ -58,9 +58,9 @@ import           Poseidon.Package               (PackageReadOptions (..),
                                                  getJointJanno,
                                                  readPoseidonPackageCollection)
 import           Poseidon.Utils                 (PoseidonException (..),
-                                                 PoseidonIO,
+                                                 PoseidonIO, envErrorLength,
                                                  envLogAction, logInfo,
-                                                 logWithEnv, envErrorLength)
+                                                 logWithEnv)
 import           SequenceFormats.Eigenstrat     (EigenstratSnpEntry (..),
                                                  GenoLine)
 import           SequenceFormats.Utils          (Chrom)

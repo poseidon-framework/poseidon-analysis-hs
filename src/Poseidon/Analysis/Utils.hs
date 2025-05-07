@@ -8,7 +8,7 @@ import           Data.Aeson                 ((.:))
 import           Data.Aeson.Key             (toString)
 import           Data.Aeson.KeyMap          (toList)
 import           Data.Aeson.Types           (Object, Parser)
-import           Data.Text                  (unpack, pack)
+import           Data.Text                  (pack, unpack)
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
