@@ -243,8 +243,30 @@ pcProjectOptParser = PcProjectOpts <$>
     parseJackknife <*>
     parseEntities
 
-parseEntities :: OP.Parser EntityInput
-entitySpecParser 
+parseEntities :: OP.Parser [EntityInput PoseidonEntity]
+parseEntities = OP.some parseEntityInput
+  where
+    parseEntityInput = (EntitiesFromFile <$> parseEntitiesFromFile) <|> (EntitiesDirect <$> parseEntitiesDirect)
+
+parseEntitiesFromFile :: OP.Parser FilePath
+parseEntitiesFromFile = OP.strOption (
+    OP.long "entitiesFile" <>
+    OP.metavar "FILE" <>
+    OP.help "A file with a list of packages, groups and individuals to be projected."
+
+parseEntitiesDirect :: OP.Parser EntitiesList
+parseEntitiesDirect = OP.option (OP.eitherReader readEntities) (
+    OP.long "entities" <>
+    OP.short 'e' <>
+    OP.metavar "DSL" <>
+    OP.help "List of packages, groups and individuals to be projected. \
+        \Package names should be wrapped in asterisks: *package_title*, individuals in angular brackets. See help for `trident forge` for more details.\
+        \You can combine multiple values with comma, so for example: \"*package_1*, group_2, <individual_3>, <Pac:Group:Ind_4>\".")
+  where
+    readEntities s = case readEntitiesFromString s of
+        Left e  -> Left $ renderPoseidonException e
+        Right e -> Right e
+
 
 admixPopsOptParser :: OP.Parser AdmixPopsOptions
 admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
