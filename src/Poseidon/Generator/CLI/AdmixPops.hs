@@ -46,6 +46,7 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixOutPacName              :: Maybe String
     , _admixOutputPlinkPopMode      :: PlinkPopNameMode
     , _admixOnlyLatest              :: Bool
+    , _admixOutZip                  :: Bool
     }
 
 runAdmixPops :: AdmixPopsOptions -> PoseidonIO ()
@@ -60,6 +61,7 @@ runAdmixPops (
         maybeOutName
         outPlinkPopMode
         onlyLatest
+        outZip
     ) = do
     let pacReadOpts = defaultPackageReadOptions {
       _readOptIgnoreChecksums  = True
@@ -82,11 +84,11 @@ runAdmixPops (
     logInfo $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
     let allPackages = properPackages ++ pseudoPackages
     -- determine relevant packages
-    let popNames = concat $ map (map _inPopName) $ map _inPopSet requestedInds
+    let popNames = concatMap (map _inPopName . _inPopSet) requestedInds
     relevantPackages <- filterPackagesByPops popNames allPackages
     -- gather additional info for requested inds
     preparedInds <- mapM (`gatherInfoForInd` relevantPackages) requestedInds
-    -- create new package --
+    -- create new package
     let outName = case maybeOutName of -- take basename of outPath, if name is not provided
             Just x  -> x
             Nothing -> takeBaseName outPath
@@ -95,12 +97,11 @@ runAdmixPops (
     logInfo $ "Writing to directory (will be created if missing): " ++ outPath
     liftIO $ createDirectoryIfMissing True outPath
     -- compile genotype data structure
-    let gFileSpec = case outFormat of
-            GenotypeOutFormatEigenstrat ->
-                GenotypeEigenstrat (outName <.> ".geno") Nothing (outName <.> ".snp") Nothing (outName <.> ".ind") Nothing
-            GenotypeOutFormatPlink      ->
-                GenotypePlink (outName <.> ".bed") Nothing (outName <.> ".bim") Nothing (outName <.> ".fam") Nothing
-            _ -> error "currently only supporting Eigenstrat and Plink output"
+    let gz = if outZip then "gz" else ""
+        gFileSpec = case outFormat of
+            GenotypeOutFormatEigenstrat -> GenotypeEigenstrat (outName <.> ".geno" <.> gz) Nothing (outName <.> ".snp" <.> gz) Nothing (outName <.> ".ind") Nothing
+            GenotypeOutFormatPlink      -> GenotypePlink (outName <.> ".bed" <.> gz) Nothing (outName <.> ".bim" <.> gz) Nothing (outName <.> ".fam") Nothing
+            GenotypeOutFormatVCF        -> GenotypeVCF (outName <.> ".vcf" <.> gz) Nothing
     let genotypeData = GenotypeDataSpec gFileSpec Nothing
     pac <- newMinimalPackageTemplate outPath outName genotypeData
     liftIO $ writePoseidonPackage pac
@@ -115,12 +116,13 @@ runAdmixPops (
             let (outG, outS, outI) = case gFileSpec of
                     GenotypeEigenstrat outGeno _ outSnp _ outInd _ -> (outPath </> outGeno, outPath </> outSnp, outPath </> outInd)
                     GenotypePlink      outGeno _ outSnp _ outInd _ -> (outPath </> outGeno, outPath </> outSnp, outPath </> outInd)
-                    _ -> error "should not happen"
+                    GenotypeVCF        outGeno _                   -> (outPath </> outGeno, "", "")
             let newIndEntries = map (\x -> EigenstratIndEntry (B.pack . _indName $ x) Unknown (B.pack . _groupName $ x)) preparedInds
+                jannoRows = getJannoRows $ posPacJanno pac
             let outConsumer = case outFormat of
                     GenotypeOutFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeOutFormatPlink      -> writePlink      outG outS outI (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
-                    _ -> error "should not happen"
+                    GenotypeOutFormatVCF        -> writeVCF        logA jannoRows outG
             case methodSetting of
                 PerSNP marginalizeMissing -> do
                     runEffect $ eigenstratProd >->
@@ -136,7 +138,7 @@ runAdmixPops (
                         ) >->
                         printSNPCopyProgress logA currentTime >->
                         outConsumer
-        ) (\e -> throwIO $ PoseidonGenotypeExceptionForward errLength e)
+        ) (throwIO . PoseidonGenotypeExceptionForward errLength)
     logInfo "Done"
     where
         chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
