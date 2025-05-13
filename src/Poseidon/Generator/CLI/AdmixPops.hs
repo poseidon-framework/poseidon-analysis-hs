@@ -118,7 +118,7 @@ runAdmixPops (
                     GenotypePlink      outGeno _ outSnp _ outInd _ -> (outPath </> outGeno, outPath </> outSnp, outPath </> outInd)
                     GenotypeVCF        outGeno _                   -> (outPath </> outGeno, "", "")
             let newIndEntries = map (\x -> EigenstratIndEntry (B.pack . _indName $ x) Unknown (B.pack . _groupName $ x)) preparedInds
-                jannoRows = getJannoRows $ posPacJanno pac
+                jannoRows = getJannoRows $ createMinimalJanno newIndEntries
             let outConsumer = case outFormat of
                     GenotypeOutFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
                     GenotypeOutFormatPlink      -> writePlink      outG outS outI (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
