@@ -24,6 +24,10 @@ import           Data.Version                            (showVersion)
 import qualified Options.Applicative                     as OP
 import           Paths_poseidon_analysis_hs              (version)
 import           Poseidon.CLI.OptparseApplicativeParsers
+import           Poseidon.EntityTypes                    (EntitiesList,
+                                                          EntityInput (..),
+                                                          PoseidonEntity, readEntitiesFromString)
+import           Poseidon.CLI.OptparseApplicativeParsers     (parseGenoDataSources)
 import           Poseidon.PoseidonVersion                (showPoseidonVersion,
                                                           validPoseidonVersions)
 import           Poseidon.Utils                          (ErrorLength (..),
@@ -51,7 +55,7 @@ data Subcommand =
       CmdFstats FstatsOptions
     | CmdRAS RASOptions
     | CmdAdmixPops AdmixPopsOptions
-    | CmdPcProject PcProjectOpts
+    | CmdPcProject PCprojectOpts
 
 main :: IO ()
 main = do
@@ -70,7 +74,7 @@ runCmd o = case o of
     CmdFstats opts    -> runFstats opts
     CmdRAS opts       -> runRAS opts
     CmdAdmixPops opts -> runAdmixPops opts
-    CmdPcProject opts -> runPcProject opts
+    CmdPcProject opts -> runPCproject opts
 
 optParserInfo :: OP.ParserInfo Options
 optParserInfo = OP.info (OP.helper <*> versionOption <*>
@@ -116,7 +120,7 @@ subcommandParser =
         (OP.progDesc "Project samples onto Principal Component axes given via SNP loadings")
     admixPopsOptInfo = OP.info (OP.helper <*> (CmdAdmixPops <$> admixPopsOptParser))
         (OP.progDesc "Generate individuals with randomized genotype profiles based on admixture proportions (experimental)")
-    
+
 
 fstatsOptParser :: OP.Parser FstatsOptions
 fstatsOptParser = FstatsOptions <$> parseBasePaths
@@ -236,9 +240,9 @@ parseBedFile :: OP.Parser (Maybe FilePath)
 parseBedFile = OP.option (Just <$> OP.str) (OP.long "bedFile" <> OP.help "An optional bed file that gives sites to be \
     \included in the analysis." <> OP.value Nothing)
 
-pcProjectOptParser :: OP.Parser PcProjectOpts
-pcProjectOptParser = PcProjectOpts <$>
-    parseGenoSource <*>
+pcProjectOptParser :: OP.Parser PCprojectOpts
+pcProjectOptParser = PCprojectOpts <$>
+    parseGenoDataSources <*>
     parseSnpLoadingFile <*>
     parseJackknife <*>
     parseEntities
@@ -252,7 +256,7 @@ parseEntitiesFromFile :: OP.Parser FilePath
 parseEntitiesFromFile = OP.strOption (
     OP.long "entitiesFile" <>
     OP.metavar "FILE" <>
-    OP.help "A file with a list of packages, groups and individuals to be projected."
+    OP.help "A file with a list of packages, groups and individuals to be projected.")
 
 parseEntitiesDirect :: OP.Parser EntitiesList
 parseEntitiesDirect = OP.option (OP.eitherReader readEntities) (
@@ -267,6 +271,11 @@ parseEntitiesDirect = OP.option (OP.eitherReader readEntities) (
         Left e  -> Left $ renderPoseidonException e
         Right e -> Right e
 
+parseSnpLoadingFile :: OP.Parser FilePath 
+parseSnpLoadingFile = OP.strOption (
+    OP.long "snpLoadingsFile" <>
+    OP.metavar "FILE" <>
+    OP.help "A file with a list of SNP loadings, formatted as output from Eigensoft's smartPCA. Every row corresponds to one SNP. Columns are whitespace-separated with no heading: 1) SNP_ID 2) Chrom 3) Position 4) PC1 loading, 5) PC2 loading etc... ")
 
 admixPopsOptParser :: OP.Parser AdmixPopsOptions
 admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
