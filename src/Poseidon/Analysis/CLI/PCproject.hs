@@ -45,4 +45,6 @@ runPCproject (PCprojectOpts genoSources snpLoadingFile jackknifeMode entityInput
             return $ map (Pac . makePacNameAndVersion) allLatestPackages
         e  -> return e
 
-    logInfo $ "Called pcProject with " ++ show entities
+    logInfo $ "Reading Snp Loadings from file " ++ show snpLoadingFile
+
+    
