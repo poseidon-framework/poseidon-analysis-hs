@@ -1,7 +1,6 @@
 module Poseidon.Generator.Types where
 
-import           Data.List      (intercalate)
-import           Poseidon.Janno
+import           Data.List (intercalate)
 
 data IndConcrete = IndConcrete {
       _indName   :: String
@@ -34,15 +33,3 @@ data PopFrac = PopFrac {
 instance Show PopFrac where
     show (PopFrac _pop _frac) =
         _pop ++ "=" ++ show _frac
-
-data IndWithPosition = IndWithPosition {
-      spatInd  :: String
-    , spatUnit :: String
-    , spatPos  :: SpatialTemporalPosition
-} deriving (Show)
-
-data SpatialTemporalPosition = SpatialTemporalPosition {
-      time :: Int
-    , lat  :: Latitude
-    , lon  :: Longitude
-} deriving (Show)
