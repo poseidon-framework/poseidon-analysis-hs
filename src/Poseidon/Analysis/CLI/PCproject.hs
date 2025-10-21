@@ -1,16 +1,20 @@
 module Poseidon.Analysis.CLI.PCproject where
 
-import           Poseidon.Analysis.Utils (JackknifeMode)
+import           Poseidon.Analysis.SnpLoadingParser (snpLoadingParser)
+import           Poseidon.Analysis.Utils            (JackknifeMode)
 
-import Control.Monad (filterM)
-import           Poseidon.EntityTypes    (EntityInput, PoseidonEntity (..),
-                                          readEntityInputs, isLatestInCollection, makePacNameAndVersion)
-import           Poseidon.GenotypeData   (GenoDataSource (..))
-import           Poseidon.Package        (PackageReadOptions (..),
-                                          defaultPackageReadOptions,
-                                          makePseudoPackageFromGenotypeData,
-                                          readPoseidonPackageCollection)
-import           Poseidon.Utils          (PoseidonIO, logInfo)
+import           Control.Monad                      (filterM)
+import           Poseidon.EntityTypes               (EntityInput,
+                                                     PoseidonEntity (..),
+                                                     isLatestInCollection,
+                                                     makePacNameAndVersion,
+                                                     readEntityInputs)
+import           Poseidon.GenotypeData              (GenoDataSource (..))
+import           Poseidon.Package                   (PackageReadOptions (..),
+                                                     defaultPackageReadOptions,
+                                                     makePseudoPackageFromGenotypeData,
+                                                     readPoseidonPackageCollection)
+import           Poseidon.Utils                     (PoseidonIO, logInfo)
 
 data PCprojectOpts = PCprojectOpts
     { _pcGenoSource      :: [GenoDataSource]
@@ -41,10 +45,17 @@ runPCproject (PCprojectOpts genoSources snpLoadingFile jackknifeMode entityInput
 
     entities <- case entitiesUser of
         [] -> do
-            logInfo "No requested entities. Implicitly forging all packages (latest versions)."
+            logInfo "No requested entities. Implicitly selecting all individuals from all latest packages."
             return $ map (Pac . makePacNameAndVersion) allLatestPackages
         e  -> return e
 
-    logInfo $ "Reading Snp Loadings from file " ++ show snpLoadingFile
+    relevantPackages <- filterToRelevantPackages entities allPackages
+    logInfo $ (show . length $ relevantPackages) ++ " packages contain data for this forging operation"
+    when (null relevantPackages) $ liftIO $ throwIO PoseidonEmptyForgeException
 
-    
+    logInfo $ "Reading Snp Loadings from file " ++ snpLoadingFile
+
+    runSafeT $ do
+        snpLoadingProd <- readSnpLoadingFile snpLoadingFile
+        eigenstratProd <- getJointGenotypeData logA False relevantPackages Nothing
+

@@ -1,6 +1,7 @@
 module Poseidon.Analysis.SnpLoadingParser where
 
 import qualified Data.Attoparsec.ByteString.Char8 as A
+import SequenceFormats.Utils (consumeProducer, readFileProdCheckCompress)
 
 data SnpLoadingEntry = SnpLoadingEntry
     { snpId         :: B.ByteString
@@ -19,3 +20,6 @@ snpLoadingParser = do
     return $ SnpLoadingEntry snpId snpChrom snpPos snpLoadings
   where
     word = A.takeTill isSpace
+
+readSnpLoadingFile :: (MonadSafe m) => FilePath -> Producer EigenstratSnpEntry m ()
+readSnpLoadingFile = consumeProducer snpLoadingParser . readFileProdCheckCompress
