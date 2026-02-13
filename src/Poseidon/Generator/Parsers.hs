@@ -5,13 +5,13 @@ import           Poseidon.Generator.Utils
 
 import           Poseidon.ColumnTypesJanno
 
-import           Control.Exception        (throwIO)
-import           Control.Monad            (guard)
-import           Data.List                (intercalate)
-import           Data.Ratio               ((%))
-import qualified Text.Parsec              as P
-import qualified Text.Parsec.Number       as P
-import qualified Text.Parsec.String       as P
+import           Control.Exception         (throwIO)
+import           Control.Monad             (guard)
+import           Data.List                 (intercalate)
+import           Data.Ratio                ((%))
+import qualified Text.Parsec               as P
+import qualified Text.Parsec.Number        as P
+import qualified Text.Parsec.String        as P
 
 renderRequestedInds :: [RequestedInd] -> String
 renderRequestedInds requestedInds =

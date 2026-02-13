@@ -8,11 +8,12 @@ import           Data.Aeson                 ((.:))
 import           Data.Aeson.Key             (toString)
 import           Data.Aeson.KeyMap          (toList)
 import           Data.Aeson.Types           (Object, Parser)
-import qualified Data.Text                    as T
+import qualified Data.Text                  as T
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
-import           Poseidon.ColumnTypesJanno  (JannoGenotypePloidy (..), GroupName(..))
+import           Poseidon.ColumnTypesJanno  (GroupName (..),
+                                             JannoGenotypePloidy (..))
 import           Poseidon.ColumnTypesUtils  (ListColumn (..))
 import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              SignedEntitiesList,

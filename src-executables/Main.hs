@@ -24,11 +24,11 @@ import           Paths_poseidon_analysis_hs              (version)
 import           Poseidon.CLI.OptparseApplicativeParsers
 import           Poseidon.PoseidonVersion                (showPoseidonVersion,
                                                           validPoseidonVersions)
-import           Poseidon.Utils                          (LogMode (..),
+import           Poseidon.Utils                          (ErrorLength (..),
+                                                          LogMode (..),
                                                           PlinkPopNameMode (..),
                                                           PoseidonException (..),
                                                           PoseidonIO, TestMode,
-                                                          ErrorLength (..),
                                                           logError,
                                                           renderPoseidonException,
                                                           usePoseidonLogger)
