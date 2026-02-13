@@ -6,7 +6,7 @@ import qualified Data.Vector                as V
 import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              PoseidonEntity (..),
                                              SignedEntity (..))
-import           Poseidon.Janno             (JannoGenotypePloidy (..))
+import           Poseidon.ColumnTypesJanno  (JannoGenotypePloidy (..))
 import           Poseidon.Package           (PackageReadOptions (..),
                                              defaultPackageReadOptions,
                                              getJointIndividualInfo,
