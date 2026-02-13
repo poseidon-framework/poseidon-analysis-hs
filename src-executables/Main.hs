@@ -28,6 +28,7 @@ import           Poseidon.Utils                          (LogMode (..),
                                                           PlinkPopNameMode (..),
                                                           PoseidonException (..),
                                                           PoseidonIO, TestMode,
+                                                          ErrorLength (..),
                                                           logError,
                                                           renderPoseidonException,
                                                           usePoseidonLogger)
@@ -54,17 +55,12 @@ main = do
     hPutStrLn stderr renderVersion
     hPutStrLn stderr ""
     (Options logMode testMode errLength plinkMode subcommand) <- OP.customExecParser (OP.prefs OP.showHelpOnEmpty) optParserInfo
-    catch (usePoseidonLogger logMode testMode plinkMode $ runCmd subcommand) (handler logMode testMode errLength plinkMode)
+    catch (usePoseidonLogger logMode testMode plinkMode errLength $ runCmd subcommand) (handler logMode testMode plinkMode errLength)
     where
-        handler :: LogMode -> TestMode -> ErrorLength -> PlinkPopNameMode -> PoseidonException -> IO ()
-        handler l t len pm e = do
-            usePoseidonLogger l t pm $ logError $ truncateErr len $ renderPoseidonException e
+        handler :: LogMode -> TestMode -> PlinkPopNameMode -> ErrorLength -> PoseidonException -> IO ()
+        handler l t pm len e = do
+            usePoseidonLogger l t pm len $ logError $ renderPoseidonException e
             exitFailure
-        truncateErr :: ErrorLength -> String -> String
-        truncateErr CharInf         s = s
-        truncateErr (CharCount len) s
-            | length s > len          = take len s ++ "... (see more with --errLength)"
-            | otherwise               = s
 
 runCmd :: Subcommand -> PoseidonIO ()
 runCmd o = case o of
@@ -239,6 +235,7 @@ admixPopsOptParser = AdmixPopsOptions <$> parseGenoDataSources
                                       <*> parseIndWithAdmixtureSetFromFile
                                       <*> parseAdmixPopsMethodSettings
                                       <*> parseOutGenotypeFormat True
+                                      <*> parseZipOut
                                       <*> parseOutPackagePath
                                       <*> parseMaybeOutPackageName
                                       <*> parseOutputPlinkPopMode

@@ -1,18 +1,19 @@
-resolver: lts-21.17
+resolver: lts-22.43
 
 packages:
 - .
-# - ../poseidon-hs
+- ../poseidon-hs
 
 extra-deps:
-  - git: https://github.com/poseidon-framework/poseidon-hs
-    commit: 466870a0968aa093a31e02b74e9b802213ab29d8
+  # - git: https://github.com/poseidon-framework/poseidon-hs
+  #   commit: 163a00f8d326a2406527237dfb15e6e9e3cdb1b4
   - table-layout-0.9.1.0
   - data-default-instances-base-0.1.0.1
-  - sequence-formats-1.7.0
+  - sequence-formats-1.11.0.2
   - pipes-ordered-zip-1.2.1
   - co-log-0.6.0.2
   - ansi-terminal-0.10.3
   - parsec3-numbers-0.1.0
   - chronos-1.1.5
+  - scotty-0.22 # not available yet in lts-22.43
 allow-newer: true

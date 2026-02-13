@@ -8,17 +8,18 @@ import           Data.Aeson                 ((.:))
 import           Data.Aeson.Key             (toString)
 import           Data.Aeson.KeyMap          (toList)
 import           Data.Aeson.Types           (Object, Parser)
+import qualified Data.Text                    as T
 import qualified Data.Vector                as V
 import           Pipes                      (Pipe, cat)
 import qualified Pipes.Prelude              as P
+import           Poseidon.ColumnTypesJanno  (JannoGenotypePloidy (..), GroupName(..))
+import           Poseidon.ColumnTypesUtils  (ListColumn (..))
 import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              SignedEntitiesList,
                                              indInfoConformsToEntitySpecs,
                                              isLatestInCollection,
                                              makePacNameAndVersion)
-import           Poseidon.Janno             (JannoGenotypePloidy (..),
-                                             JannoList (..), JannoRow (..),
-                                             JannoRows (..), getJannoList)
+import           Poseidon.Janno             (JannoRow (..), JannoRows (..))
 import           Poseidon.Package           (PoseidonPackage (..),
                                              getJannoRowsFromPac)
 import           Poseidon.Utils             (PoseidonException (..), PoseidonIO,
@@ -45,13 +46,13 @@ addGroupDefs groupDefs pacs = do -- this loops through all input packages
     isLatest <- isLatestInCollection pacs pac
     let newJanno = JannoRows $ do -- this loops through the janno-file
             jannoRow <- getJannoRowsFromPac pac
-            let oldGroupNames = (getJannoList . jGroupName) jannoRow
+            let oldGroupNames = getListColumn . jGroupName $ jannoRow
             let additionalGroupNames = do -- this loops through each new group definition and returns those group names that apply to this janno-row
                     (groupName, signedEntityList) <- groupDefs
-                    let indInfo = IndividualInfo (jPoseidonID jannoRow) oldGroupNames (makePacNameAndVersion pac)
+                    let indInfo = IndividualInfo (jPoseidonID jannoRow) (map (\(GroupName n) -> T.unpack n) oldGroupNames) (makePacNameAndVersion pac)
                     True <- return $ indInfoConformsToEntitySpecs indInfo isLatest signedEntityList -- this checks whether a new group-def applies to this janno-row
-                    return groupName -- only returns if the previous row pattern-matched, i.e. if the group applies
-            return $ jannoRow {jGroupName = JannoList (oldGroupNames ++ additionalGroupNames)} -- returns a new janno-row with the new group definitions
+                    return . GroupName . T.pack $ groupName -- only returns if the previous row pattern-matched, i.e. if the group applies
+            return $ jannoRow {jGroupName = ListColumn (oldGroupNames ++ additionalGroupNames)} -- returns a new janno-row with the new group definitions
     return $ pac {posPacJanno = newJanno} -- returns a new package with the new janno
 
 parseGroupDefsFromJSON :: Object -> Parser [GroupDef]

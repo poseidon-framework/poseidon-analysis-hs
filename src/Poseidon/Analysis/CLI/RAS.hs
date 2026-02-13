@@ -35,7 +35,7 @@ import           Poseidon.EntityTypes        (EntitiesList, IndividualInfo (..),
                                               determineRelevantPackages,
                                               resolveUniqueEntityIndices,
                                               underlyingEntity)
-import           Poseidon.Janno              (JannoGenotypePloidy (..))
+import           Poseidon.ColumnTypesJanno   (JannoGenotypePloidy (..))
 import           Poseidon.Package            (PackageReadOptions (..),
                                               PoseidonPackage (..),
                                               defaultPackageReadOptions,
@@ -44,8 +44,9 @@ import           Poseidon.Package            (PackageReadOptions (..),
                                               getJointJanno,
                                               readPoseidonPackageCollection)
 import           Poseidon.Utils              (PoseidonException (..),
-                                              PoseidonIO, envInputPlinkMode,
-                                              envLogAction, logInfo, logWithEnv)
+                                              PoseidonIO,
+                                              envLogAction, logInfo, logWithEnv,
+                                              envErrorLength)
 import           SequenceFormats.Bed         (filterThroughBed, readBedFile)
 import           SequenceFormats.Eigenstrat  (EigenstratSnpEntry (..),
                                               GenoEntry (..), GenoLine)
@@ -137,10 +138,10 @@ runRAS rasOpts = do
 
     -- run the fold and retrieve the block data needed for RAS computations and output
     logA <- envLogAction
-    inPlinkPopMode <- envInputPlinkMode
+    errLength <- envErrorLength
     blockData <- liftIO $ catch (
         runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData logA False inPlinkPopMode relevantPackages Nothing
+            eigenstratProd <- getJointGenotypeData logA False relevantPackages Nothing
             let eigenstratProdFiltered =
                     bedFilterFunc (eigenstratProd >->
                                     P.filter (chromFilter (_rasExcludeChroms rasOpts)) >->
@@ -152,7 +153,7 @@ runRAS rasOpts = do
             let summaryStatsProd = impurely foldsM rasFold eigenstratProdInChunks
             logWithEnv logA . logInfo $ "performing counts"
             purely P.fold list (summaryStatsProd >-> P.tee (P.map showBlockLogOutput >-> P.toHandle stderr))
-        ) (throwIO . PoseidonGenotypeExceptionForward)
+        ) (throwIO . PoseidonGenotypeExceptionForward errLength)
 
     -- outputting and computing results
     logInfo "collating results"
@@ -250,9 +251,9 @@ buildRasFold packages minFreq maxFreq maxM maybeOutgroup popLefts popRights = do
     ploidyVec <- makePloidyVec . getJointJanno $ packages
     outgroupI <- case maybeOutgroup of
             Nothing -> return []
-            Just o  -> resolveUniqueEntityIndices [o] indInfoCollection
-    leftI <- sequence [resolveUniqueEntityIndices [l] indInfoCollection | l <- popLefts]
-    rightI <- sequence [resolveUniqueEntityIndices [r] indInfoCollection | r <- popRights]
+            Just o  -> resolveUniqueEntityIndices True [o] indInfoCollection
+    leftI <- sequence [resolveUniqueEntityIndices True [l] indInfoCollection | l <- popLefts]
+    rightI <- sequence [resolveUniqueEntityIndices True [r] indInfoCollection | r <- popRights]
     let nL = length popLefts
         nR = length popRights
     let indivNames = map indInfoName (fst indInfoCollection)
