@@ -1,9 +1,17 @@
 module Poseidon.Generator.CLI.AdmixPops where
 
+import           Poseidon.ColumnTypesJanno     (JannoGenotypePloidy (..))
+import           Poseidon.EntityTypes          (HasNameAndVersion (..))
 import           Poseidon.Generator.Parsers
 import           Poseidon.Generator.SampleGeno
 import           Poseidon.Generator.Types
 import           Poseidon.Generator.Utils
+import           Poseidon.GenotypeData
+import           Poseidon.Janno                (JannoRows (..),
+                                                createMinimalJanno,
+                                                jGenotypePloidy)
+import           Poseidon.Package
+import           Poseidon.Utils
 
 import           Control.Exception             (catch, throwIO)
 import           Control.Monad                 (forM, unless, when)
@@ -18,10 +26,6 @@ import           Pipes
 import qualified Pipes.Group                   as PG
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (runSafeT)
-import           Poseidon.EntityTypes          (HasNameAndVersion (..))
-import           Poseidon.GenotypeData
-import           Poseidon.Package
-import           Poseidon.Utils
 import           SequenceFormats.Eigenstrat
 import           SequenceFormats.Plink         (eigenstratInd2PlinkFam,
                                                 writePlink)
@@ -100,14 +104,18 @@ runAdmixPops (
     let gz = if outZip then "gz" else ""
     genotypeFileData <- case outFormat of
             GenotypeOutFormatEigenstrat ->
-                return $ GenotypeEigenstrat (outName <.> "geno" <.> gz)  Nothing
-                                   (outName <.> "snp" <.> gz)  Nothing
-                                   (outName <.> "ind") Nothing
-            GenotypeOutFormatPlink      ->
-                return $ GenotypePlink      (outName <.> "bed" <.> gz)  Nothing
-                                   (outName <.> "bim" <.> gz)  Nothing
-                                   (outName <.> "fam")  Nothing
-            GenotypeOutFormatVCF        -> throwM $ PoseidonGeneratorCLIParsingException "VCF output format not supported yet for admixing populations"
+                return $ GenotypeEigenstrat
+                    (outName <.> "geno" <.> gz) Nothing
+                    (outName <.> "snp" <.> gz) Nothing
+                    (outName <.> "ind") Nothing
+            GenotypeOutFormatPlink ->
+                return $ GenotypePlink
+                    (outName <.> "bed" <.> gz) Nothing
+                    (outName <.> "bim" <.> gz) Nothing
+                    (outName <.> "fam") Nothing
+            GenotypeOutFormatVCF ->
+                return $ GenotypeVCF
+                    (outName <.> "vcf" <.> gz) Nothing
     let genotypeData = GenotypeDataSpec genotypeFileData Nothing -- we set no snpSet
     pac <- newMinimalPackageTemplate outPath outName genotypeData
     liftIO $ writePoseidonPackage pac
@@ -122,10 +130,22 @@ runAdmixPops (
             let newIndEntries = map (\x -> EigenstratIndEntry (B.pack $ _indName x) Unknown (B.pack $ _groupName x)) preparedInds
             outConsumer <- case genotypeFileData of
                     GenotypeEigenstrat outG _ outS _ outI _ ->
-                        return $ writeEigenstrat (outPath </> outG) (outPath </> outS) (outPath </> outI) newIndEntries
-                    GenotypePlink      outG _ outS _ outI _ ->
-                        return $ writePlink      (outPath </> outG) (outPath </> outS) (outPath </> outI) (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
-                    GenotypeVCF _ _ -> throwM $ PoseidonGeneratorCLIParsingException "VCF output format not supported yet for admixing populations"
+                        return $ writeEigenstrat
+                            (outPath </> outG)
+                            (outPath </> outS)
+                            (outPath </> outI)
+                            newIndEntries
+                    GenotypePlink outG _ outS _ outI _ ->
+                        return $ writePlink
+                            (outPath </> outG)
+                            (outPath </> outS)
+                            (outPath </> outI)
+                            (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
+                    GenotypeVCF outG _ -> do
+                        let (JannoRows xs) = createMinimalJanno newIndEntries
+                            -- writeVCF needs to know if diploid or pseudo-haploid genotypes
+                            madeUpPloidyJannoRows = map (\x -> x {jGenotypePloidy = Just Diploid}) xs
+                        return $ writeVCF logA madeUpPloidyJannoRows (outPath </> outG)
             case methodSetting of
                 PerSNP marginalizeMissing -> do
                     runEffect $ eigenstratProd >->
