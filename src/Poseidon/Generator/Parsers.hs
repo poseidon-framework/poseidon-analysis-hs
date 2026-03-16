@@ -3,11 +3,11 @@ module Poseidon.Generator.Parsers where
 import           Poseidon.Generator.Types
 import           Poseidon.Generator.Utils
 
-import           Control.Exception         (throwIO)
-import           Data.List                 (intercalate)
-import           Data.Ratio                ((%))
-import qualified Text.Parsec               as P
-import qualified Text.Parsec.String        as P
+import           Control.Exception        (throwIO)
+import           Data.List                (intercalate)
+import           Data.Ratio               ((%))
+import qualified Text.Parsec              as P
+import qualified Text.Parsec.String       as P
 
 renderRequestedInds :: [RequestedInd] -> String
 renderRequestedInds requestedInds =

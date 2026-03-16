@@ -1,6 +1,6 @@
 module Poseidon.Generator.Types where
 
-import           Data.List                 (intercalate)
+import           Data.List (intercalate)
 
 data IndConcrete = IndConcrete {
       _indName   :: String

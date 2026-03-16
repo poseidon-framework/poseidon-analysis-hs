@@ -3,10 +3,10 @@ module Poseidon.Analysis.UtilsSpec (spec) where
 import           Poseidon.Analysis.Utils    (addGroupDefs, computeAlleleCount)
 
 import qualified Data.Vector                as V
+import           Poseidon.ColumnTypesJanno  (JannoGenotypePloidy (..))
 import           Poseidon.EntityTypes       (IndividualInfo (..),
                                              PoseidonEntity (..),
                                              SignedEntity (..))
-import           Poseidon.ColumnTypesJanno  (JannoGenotypePloidy (..))
 import           Poseidon.Package           (PackageReadOptions (..),
                                              defaultPackageReadOptions,
                                              getJointIndividualInfo,
