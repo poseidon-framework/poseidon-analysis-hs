@@ -1,5 +1,5 @@
 name:                poseidon-analysis-hs
-version:             1.0.1.2
+version:             1.0.2.0
 synopsis:            A package with analysis-tools to work with Poseidon Genotype Data
 description:         The tools in this package analyse Poseidon-formatted genotype databases, a modular system for storing genotype data from thousands of individuals.
 license:             MIT
@@ -15,7 +15,7 @@ extra-source-files:  README.md,
 library
     exposed-modules:    Poseidon.Analysis.FStatsConfig, Poseidon.Analysis.RASconfig, Poseidon.Analysis.Utils,
                         Poseidon.Analysis.CLI.FStats, Poseidon.Analysis.CLI.RAS,
-                        Poseidon.Generator.CLI.AdmixPops, Poseidon.Generator.CLI.SpaceTime,
+                        Poseidon.Generator.CLI.AdmixPops,
                         Poseidon.Generator.Parsers, Poseidon.Generator.Types,
                         Poseidon.Generator.SampleGeno, Poseidon.Generator.Utils
     hs-source-dirs:     src

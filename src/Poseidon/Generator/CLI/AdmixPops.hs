@@ -1,12 +1,22 @@
 module Poseidon.Generator.CLI.AdmixPops where
 
+import           Poseidon.ColumnTypesJanno     (JannoGenotypePloidy (..))
+import           Poseidon.EntityTypes          (HasNameAndVersion (..))
 import           Poseidon.Generator.Parsers
 import           Poseidon.Generator.SampleGeno
 import           Poseidon.Generator.Types
 import           Poseidon.Generator.Utils
+import           Poseidon.GenotypeData
+import           Poseidon.Janno                (JannoRows (..),
+                                                createMinimalJanno,
+                                                jGenotypePloidy)
+import           Poseidon.Package
+import           Poseidon.Utils
 
 import           Control.Exception             (catch, throwIO)
 import           Control.Monad                 (forM, unless, when)
+import           Control.Monad.Catch           (throwM)
+import qualified Data.ByteString.Char8         as B
 import           Data.Function                 ((&))
 import           Data.List
 import           Data.Maybe
@@ -16,11 +26,6 @@ import           Pipes
 import qualified Pipes.Group                   as PG
 import qualified Pipes.Prelude                 as P
 import           Pipes.Safe                    (runSafeT)
-import           Poseidon.EntityTypes          (HasNameAndVersion (..))
-import           Poseidon.GenotypeData
-import           Poseidon.Janno
-import           Poseidon.Package
-import           Poseidon.Utils
 import           SequenceFormats.Eigenstrat
 import           SequenceFormats.Plink         (eigenstratInd2PlinkFam,
                                                 writePlink)
@@ -40,7 +45,8 @@ data AdmixPopsOptions = AdmixPopsOptions {
     , _admixIndWithAdmixtureSet     :: [RequestedInd]
     , _admixIndWithAdmixtureSetFile :: Maybe FilePath
     , _admixMethodSettings          :: AdmixPopsMethodSettings
-    , _admixOutFormat               :: GenotypeFormatSpec
+    , _admixOutFormat               :: GenotypeOutFormatSpec
+    , _admixOutZip                  :: Bool
     , _admixOutPath                 :: FilePath
     , _admixOutPacName              :: Maybe String
     , _admixOutputPlinkPopMode      :: PlinkPopNameMode
@@ -55,6 +61,7 @@ runAdmixPops (
         popsWithFracsFile
         methodSetting
         outFormat
+        outZip
         outPath
         maybeOutName
         outPlinkPopMode
@@ -76,7 +83,7 @@ runAdmixPops (
     logInfo $ "Individuals: " ++ renderRequestedInds requestedInds
     liftIO $ checkIndsWithAdmixtureSets requestedInds
     -- load Poseidon packages
-    properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDirs x | x@PacBaseDir {} <- genoSources]
+    properPackages <- readPoseidonPackageCollection pacReadOpts $ [getPacBaseDir x | x@PacBaseDir {} <- genoSources]
     pseudoPackages <- mapM makePseudoPackageFromGenotypeData $ [getGenoDirect x | x@GenoDirect {} <- genoSources]
     logInfo $ "Unpackaged genotype data files loaded: " ++ show (length pseudoPackages)
     let allPackages = properPackages ++ pseudoPackages
@@ -94,24 +101,51 @@ runAdmixPops (
     logInfo $ "Writing to directory (will be created if missing): " ++ outPath
     liftIO $ createDirectoryIfMissing True outPath
     -- compile genotype data structure
-    let (outInd, outSnp, outGeno) = case outFormat of
-            GenotypeFormatEigenstrat -> (outName <.> ".ind", outName <.> ".snp", outName <.> ".geno")
-            GenotypeFormatPlink -> (outName <.> ".fam", outName <.> ".bim", outName <.> ".bed")
-    let genotypeData = GenotypeDataSpec outFormat outGeno Nothing outSnp Nothing outInd Nothing Nothing
-        pac = newMinimalPackageTemplate outPath outName genotypeData
+    let gz = if outZip then "gz" else ""
+    genotypeFileData <- case outFormat of
+            GenotypeOutFormatEigenstrat ->
+                return $ GenotypeEigenstrat
+                    (outName <.> "geno" <.> gz) Nothing
+                    (outName <.> "snp" <.> gz) Nothing
+                    (outName <.> "ind") Nothing
+            GenotypeOutFormatPlink ->
+                return $ GenotypePlink
+                    (outName <.> "bed" <.> gz) Nothing
+                    (outName <.> "bim" <.> gz) Nothing
+                    (outName <.> "fam") Nothing
+            GenotypeOutFormatVCF ->
+                return $ GenotypeVCF
+                    (outName <.> "vcf" <.> gz) Nothing
+    let genotypeData = GenotypeDataSpec genotypeFileData Nothing -- we set no snpSet
+    pac <- newMinimalPackageTemplate outPath outName genotypeData
     liftIO $ writePoseidonPackage pac
     -- compile genotype data
     logInfo "Compiling individuals"
     logA <- envLogAction
     currentTime <- liftIO getCurrentTime
+    errLength <- envErrorLength
     liftIO $ catch (
         runSafeT $ do
-            (_, eigenstratProd) <- getJointGenotypeData logA False outPlinkPopMode relevantPackages Nothing
-            let (outG, outS, outI) = (outPath </> outGeno, outPath </> outSnp, outPath </> outInd)
-            let newIndEntries = map (\x -> EigenstratIndEntry (_indName x) Unknown (_groupName x)) preparedInds
-            let outConsumer = case outFormat of
-                    GenotypeFormatEigenstrat -> writeEigenstrat outG outS outI newIndEntries
-                    GenotypeFormatPlink      -> writePlink      outG outS outI (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
+            eigenstratProd <- getJointGenotypeData logA False relevantPackages Nothing
+            let newIndEntries = map (\x -> EigenstratIndEntry (B.pack $ _indName x) Unknown (B.pack $ _groupName x)) preparedInds
+            outConsumer <- case genotypeFileData of
+                    GenotypeEigenstrat outG _ outS _ outI _ ->
+                        return $ writeEigenstrat
+                            (outPath </> outG)
+                            (outPath </> outS)
+                            (outPath </> outI)
+                            newIndEntries
+                    GenotypePlink outG _ outS _ outI _ ->
+                        return $ writePlink
+                            (outPath </> outG)
+                            (outPath </> outS)
+                            (outPath </> outI)
+                            (map (eigenstratInd2PlinkFam outPlinkPopMode) newIndEntries)
+                    GenotypeVCF outG _ -> do
+                        let (JannoRows xs) = createMinimalJanno newIndEntries
+                            -- writeVCF needs to know if diploid or pseudo-haploid genotypes
+                            madeUpPloidyJannoRows = map (\x -> x {jGenotypePloidy = Just Diploid}) xs
+                        return $ writeVCF logA madeUpPloidyJannoRows (outPath </> outG)
             case methodSetting of
                 PerSNP marginalizeMissing -> do
                     runEffect $ eigenstratProd >->
@@ -127,7 +161,7 @@ runAdmixPops (
                         ) >->
                         printSNPCopyProgress logA currentTime >->
                         outConsumer
-        ) (\e -> throwIO $ PoseidonGenotypeExceptionForward e)
+        ) (throwM . PoseidonGenotypeExceptionForward errLength)
     logInfo "Done"
     where
         chunkEigenstratByNrSnps chunkSize = view (PG.chunksOf chunkSize)
@@ -155,7 +189,7 @@ filterPackagesByPops :: [String] -> [PoseidonPackage] -> PoseidonIO [PoseidonPac
 filterPackagesByPops pops packages = do
     fmap catMaybes . forM packages $ \pac -> do
         inds <- loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)
-        let groupNamesPac = [groupName | EigenstratIndEntry _ _ groupName <- inds]
+        let groupNamesPac = [B.unpack groupName | EigenstratIndEntry _ _ groupName <- inds]
         if   not (null (groupNamesPac `intersect` pops))
         then return (Just pac)
         else return Nothing
@@ -169,9 +203,9 @@ extractIndsPerPop :: PopFrac -> [PoseidonPackage] -> PoseidonIO PopFracConcrete
 extractIndsPerPop (PopFrac pop_ frac_) relevantPackages = do
     let allPackageNames = map getPacName relevantPackages
     allIndEntries <- mapM (\pac -> loadIndividuals (posPacBaseDir pac) (posPacGenotypeData pac)) relevantPackages
-    let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == pop_
+    let filterFunc (_,_,EigenstratIndEntry _ _ _group) = _group == B.pack pop_
         indNames = map extractIndName $ filter filterFunc (zipGroup allPackageNames allIndEntries)
         indIDs = map extractFirst $ filter filterFunc (zipGroup allPackageNames allIndEntries)
     return (PopFracConcrete pop_ frac_ (zip indNames indIDs))
     where
-        extractIndName (_,_,EigenstratIndEntry x _ _) = x
+        extractIndName (_,_,EigenstratIndEntry x _ _) = B.unpack x
